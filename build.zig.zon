@@ -9,7 +9,7 @@
     .dependencies = .{
         .sip = .{
             .url = "https://github.com/soundhearddev/sip/archive/refs/tags/0.1.1-beta1.tar.gz",
-            .hash = "sip-0.1.1-QVQ7bJWWAACipzEpGN7vFCLDYjyEV0ld1D-zBZaE7j9K",
+            .hash = "sip-0.1.1-QVQ7bJWWAACipzEpGN7vFCLDYjyEV0ld0D-zBZaE7j9K",
         },
     },
 

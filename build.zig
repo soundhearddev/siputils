@@ -93,11 +93,38 @@ pub fn build(b: *std.Build) void {
         .dependOn(&run_header_test.step);
 
     // ─────────────────────────────────────────────
+    // discovery_test
+    // ─────────────────────────────────────────────
+
+    const discovery_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/discovery_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    discovery_test_mod.addImport("sip", sip_mod);
+
+    const discovery_test = b.addExecutable(.{
+        .name = "discovery_test",
+        .root_module = discovery_test_mod,
+    });
+
+    b.installArtifact(discovery_test);
+
+    const run_discovery_test = b.addRunArtifact(discovery_test);
+    run_discovery_test.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| run_discovery_test.addArgs(args);
+
+    b.step("run-discovery-test", "Run discovery_test")
+        .dependOn(&run_discovery_test.step);
+
+    // ─────────────────────────────────────────────
     // sniffer
     // ─────────────────────────────────────────────
 
     const discover_mod = b.createModule(.{
-        .root_source_file = b.path("src/discoverer.zig"),
+        .root_source_file = b.path("src/sniffer.zig"),
         .target = target,
         .optimize = optimize,
     });

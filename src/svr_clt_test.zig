@@ -480,19 +480,21 @@ fn runServer(io: std.Io, allocator: std.mem.Allocator, port: u16, use_v6: bool, 
 
     std.debug.print("[server] Verbindung angenommen, starte Schlüsselaustausch...\n", .{});
 
-    var disc_buf: [sip.header.OUTER_HEADER_SIZE]u8 = undefined;
+    var disc_buf: [34]u8 = undefined;
     try sip.synet.recvExact(conn, &disc_buf);
-    const disc = try sip.header.parseOuter(&disc_buf);
-    if (disc.command != @intFromEnum(sip.protocol.Command.discovery)) {
-        return error.InvalidDiscovery;
-    }
 
-    std.debug.print("[server] Discovery von meshsrc: {x}\n", .{disc.src});
+    if (disc_buf[0] != sip.header.MAGIC) return error.InvalidMagic;
+    if (disc_buf[1] != @intFromEnum(sip.protocol.Command.discovery)) return error.InvalidDiscovery;
 
-    var reply_buf: [sip.header.OUTER_HEADER_SIZE]u8 = undefined;
+    var disc_src: [16]u8 = undefined;
+    @memcpy(&disc_src, disc_buf[2..18]);
+    std.debug.print("[server] Discovery von meshsrc: {x}\n", .{disc_src});
+
+    var reply_buf: [34]u8 = undefined;
     var srv_src: [16]u8 = undefined;
     @memcpy(&srv_src, identity.address[0..16]);
-    const reply = try sip.header.buildDiscoveryPacket(&reply_buf, srv_src, disc.src);
+
+    const reply = try sip.header.buildDiscoveryPacket(&reply_buf, srv_src, disc_src);
     try sip.synet.sendAll(conn, reply);
     std.debug.print("[server] Discovery-Reply gesendet\n", .{});
 
@@ -569,10 +571,13 @@ fn runClient(
     try sip.synet.sendAll(sock, disc_pkt);
     std.debug.print("[client] Discovery gesendet\n", .{});
 
-    var reply_buf: [sip.header.OUTER_HEADER_SIZE]u8 = undefined;
+    var reply_buf: [34]u8 = undefined;
     try sip.synet.recvExact(sock, &reply_buf);
-    const reply = try sip.header.parseOuter(&reply_buf);
-    const peer_address = reply.src;
+
+    if (reply_buf[0] != sip.header.MAGIC) return error.InvalidMagic;
+
+    var peer_address: [16]u8 = undefined;
+    @memcpy(&peer_address, reply_buf[2..18]);
     std.debug.print("[client] Peer SIP-Adresse: {x}\n", .{peer_address});
 
     std.debug.print("[client] verbunden, starte Schlüsselaustausch...\n", .{});
