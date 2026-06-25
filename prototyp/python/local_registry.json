@@ -1,0 +1,14 @@
+{
+  "mxnmn-73eb.mesh": {
+    "address": "f4fca05bdb35581ce3f38143114973eb"
+  },
+  "mxnmn-8380.mesh": {
+    "address": "bd16be290ca1500199f54480d35a8380",
+    "pubkey": "fc71f89365b7d8449775cfc7f9fe7307194f8513482eab023572721496eccbf0",
+    "ipv6": "2003:102:ef1b:fbdb:fcf:e0a9:94ed:2f5c",
+    "port": 9998
+  },
+  "mxnmn-ecd9.mesh": {
+    "address": "34a5a050d7979eb54ba08c7b0825ecd9"
+  }
+}

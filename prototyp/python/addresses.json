@@ -1,0 +1,69 @@
+{
+    "addresses": [
+        {
+            "address": "2001:db8:1234:5678:fd8c:19ad:3d38:ac7c",
+            "interface": "ipwrap0",
+            "tag": "dev-test",
+            "status": "active",
+            "created_at": "2026-06-17 19:02:55",
+            "ttl_seconds": 60,
+            "expires_at": "2026-06-17 19:03:55"
+        },
+        {
+            "address": "2001:db8:1234:5678:a26f:c7a1:8c71:de19",
+            "interface": "ipwrap0",
+            "tag": "dev-test",
+            "status": "active",
+            "created_at": "2026-06-17 19:02:55",
+            "ttl_seconds": 60,
+            "expires_at": "2026-06-17 19:03:55"
+        },
+        {
+            "address": "2001:db8:1234:5678:f1c0:c0c4:3267:ffb9",
+            "interface": "ipwrap0",
+            "tag": "dev-test",
+            "status": "active",
+            "created_at": "2026-06-17 19:02:55",
+            "ttl_seconds": 60,
+            "expires_at": "2026-06-17 19:03:55"
+        },
+        {
+            "address": "2001:db8:1234:5678:ddc6:4df9:a66e:cd53",
+            "interface": "ipwrap0",
+            "tag": "dev-test",
+            "status": "active",
+            "created_at": "2026-06-17 19:02:55",
+            "ttl_seconds": 60,
+            "expires_at": "2026-06-17 19:03:55"
+        },
+        {
+            "address": "2001:db8:1234:5678:dc41:8b96:d2af:94b9",
+            "interface": "ipwrap0",
+            "tag": "dev-test",
+            "status": "active",
+            "created_at": "2026-06-17 19:02:55",
+            "ttl_seconds": 60,
+            "expires_at": "2026-06-17 19:03:55"
+        }
+    ],
+    "sessions": {
+        "8149886474352370949": {
+            "key_hex": "4c4c4f7a5d340d8ab48cde8690d38c2dcb3ddf56eb6d9ce91f552ec6384ec404",
+            "peer_mesh": "peer-mesh-addr",
+            "created": 1781037608.6186738,
+            "created_at_str": "2026-06-09 22:40:08"
+        },
+        "1749165468852518402": {
+            "key_hex": "8786eccfd8ea1eba7c99617c05240456da24406ddcdd4873e2537bcb0a857c55",
+            "peer_mesh": "peer-mesh-addr",
+            "created": 1781039202.7395463,
+            "created_at_str": "2026-06-09 23:06:42"
+        },
+        "1080695371115342493": {
+            "key_hex": "91ddbbfb70f8af19bb8231deeb1778ed525ba720f5c969df0f86ed0424a160c5",
+            "peer_mesh": "peer-mesh-addr",
+            "created": 1781039339.144387,
+            "created_at_str": "2026-06-09 23:08:59"
+        }
+    }
+}

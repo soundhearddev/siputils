@@ -1,0 +1,7 @@
+zig-out/
+zig-pkg/
+.zig-cache
+keys
+.env
+.venv
+__pycache__/

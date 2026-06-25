@@ -1,0 +1,17 @@
+.{
+    .name = .siputils,
+    .version = "0.0.1",
+
+    .fingerprint = 0xc0dce11ba3fde08b,
+
+    .minimum_zig_version = "0.16.0",
+
+    .dependencies = .{
+        .sip = .{
+            .url = "https://github.com/soundhearddev/SIP/archive/refs/tags/0.1.0-beta1.tar.gz",
+            .hash = "sip-0.1.0-QVQ7bFyaAADA_5XVfUiZWATddBR8W1FRVd90eq7ahr4k",
+        },
+    },
+
+    .paths = .{""},
+}
