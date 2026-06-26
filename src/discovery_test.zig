@@ -10,7 +10,6 @@ pub fn main(init: std.process.Init) !void {
     }
     const mode = args[1];
 
-    // IPv6 Loopback [::1] auf Port 5555
     const addr = sip.synet.buildSockaddrIn6([_]u8{0} ** 15 ++ [_]u8{1}, 5555);
 
     if (std.mem.eql(u8, mode, "server")) {
@@ -56,7 +55,7 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("[CLIENT] TCP-Verbindung erfolgreich hergestellt.\n", .{});
 
         var tx_buf: [sip.header.OUTER_HEADER_SIZE]u8 = undefined;
-        @memset(&tx_buf, 0x00); // Puffer nullen für sauberes Tracing
+        @memset(&tx_buf, 0x00);
 
         const src = [_]u8{0x11} ** 16;
         std.debug.print("[CLIENT] Baue Discovery-Paket (Src: {x})...\n", .{src});

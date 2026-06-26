@@ -212,8 +212,6 @@ fn cmdId(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
         else => return err,
     };
 
-    // Die ID-Generierung selbst (Hashing) ist Protokoll-Logik (sip.identity.genId),
-    // die Beschaffung von sicherem Zufall ist Anwendungssache und bleibt hier.
     var nonce: [16]u8 = undefined;
     const rng_src: std.Random.IoSource = .{ .io = io };
     rng_src.interface().bytes(&nonce);
