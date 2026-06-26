@@ -14,6 +14,7 @@ const Args = struct {
     use_v6: bool,
     output_path: ?[]const u8,
     identity_name: []const u8,
+    verbose: bool,
 };
 const lang = "en";
 
@@ -26,6 +27,12 @@ const lang = "en";
 //     }
 //     return "en";
 // }
+
+fn verbosePrint(verbose: bool, comptime fmt: []const u8, args: anytype) void {
+    if (verbose) {
+        std.debug.print(fmt, args);
+    }
+}
 
 fn printUsage() void {
     if (std.mem.startsWith(u8, lang, "de")) {
@@ -63,6 +70,7 @@ fn printUsage() void {
             \\  --v6              Server: listen on IPv6 (::) instead of IPv4 (0.0.0.0)
             \\  --output PATH    Server: additionally write received payload to file PATH
             \\  --help           Show this help message
+            \\  --verbose         Show more information
         , .{DEFAULT_PORT});
     }
 }
@@ -75,6 +83,7 @@ fn parseArgs(allocator: std.mem.Allocator, raw_args: []const []const u8) !Args {
     var use_v6: bool = false;
     var output_path: ?[]const u8 = null;
     var identity_name: ?[]const u8 = null;
+    var verbose: bool = false;
 
     var i: usize = 1;
     while (i < raw_args.len) {
@@ -112,6 +121,9 @@ fn parseArgs(allocator: std.mem.Allocator, raw_args: []const []const u8) !Args {
             if (i + 1 >= raw_args.len) return error.MissingArgumentValue;
             output_path = raw_args[i + 1];
             i += 2;
+        } else if (std.mem.eql(u8, arg, "--verbose")) {
+            verbose = true;
+            i += 1;
         } else {
             std.debug.print("Unbekanntes Argument: {s}\n", .{arg});
             return error.UnknownArgument;
@@ -134,6 +146,7 @@ fn parseArgs(allocator: std.mem.Allocator, raw_args: []const []const u8) !Args {
         .use_v6 = use_v6,
         .output_path = output_path,
         .identity_name = resolved_identity,
+        .verbose = verbose,
     };
 }
 
@@ -217,9 +230,16 @@ fn readFileBytes(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]
     const stat = try file.stat(io);
     std.debug.print("[debug] readFileBytes: \"{s}\" ist {d} Byte gross\n", .{ path, stat.size });
 
+    std.debug.print("[debug] allocating data\n", .{});
     const data = try allocator.alloc(u8, stat.size);
     errdefer allocator.free(data);
+    std.debug.print("[debug] data allocated\n", .{});
+
+    std.debug.print("[debug] reading file position\n", .{});
+
     _ = try file.readPositionalAll(io, data, 0);
+
+    std.debug.print("[debug] returning data\n", .{});
 
     return data;
 }
@@ -250,14 +270,16 @@ fn resolveMessage(io: std.Io, allocator: std.mem.Allocator, raw: []const u8) !Re
         const path = raw[1..];
         std.debug.print("[client] --message beginnt mit '@', lese Datei: \"{s}\"\n", .{path});
         const data = try readFileBytes(io, allocator, path);
+        std.debug.print("[debug] returning resolved Message\n", .{});
         return ResolvedMessage{ .bytes = data, .owned = true };
     }
     std.debug.print("[client] --message wird als roher Text behandelt ({d} Byte)\n", .{raw.len});
     return ResolvedMessage{ .bytes = raw, .owned = false };
 }
 
-fn sendFramed(sock: sip.synet.Socket, data: []const u8) !void {
-    std.debug.print("[debug] sendFramed: schreibe {d} Byte (+4 Byte Längenpräfix)\n", .{data.len});
+fn sendFramed(sock: sip.synet.Socket, data: []const u8, verbose: bool) !void {
+    verbosePrint(verbose, "[debug] sendFramed: schreibe {d} Byte (+4 Byte Längenpräfix)\n", .{data.len});
+
     var len_buf: [4]u8 = undefined;
     std.mem.writeInt(u32, &len_buf, @intCast(data.len), .big);
     try sip.synet.sendAll(sock, &len_buf);
@@ -343,19 +365,12 @@ fn loadOrCreateIdentity(
     }
 }
 
-fn performKeyExchange(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    sock: sip.synet.Socket,
-    local_identity: keyexchange.Identity,
-    is_initiator: bool,
-    peer_address: ?[16]u8,
-) ![keyexchange.DERIVED_KEY_SIZE]u8 {
-    std.debug.print("[keyexchange] Generiere ephemeres Schlüsselpaar...\n", .{});
+fn performKeyExchange(io: std.Io, allocator: std.mem.Allocator, sock: sip.synet.Socket, local_identity: keyexchange.Identity, is_initiator: bool, peer_address: ?[16]u8, verbose: bool) !keyexchange.SessionKeys {
+    verbosePrint(verbose, "[keyexchange] Generiere ephemeres Schlüsselpaar...\n", .{});
     var local_ephemeral = try keyexchange.EphemeralKeyPair.generate(io);
     defer local_ephemeral.deinit();
 
-    std.debug.print("[keyexchange] Erstelle HandshakeMessage...\n", .{});
+    verbosePrint(verbose, "[keyexchange] Erstelle HandshakeMessage...\n", .{});
     const local_msg = try keyexchange.HandshakeMessage.create(local_identity, local_ephemeral);
 
     var peer_msg: keyexchange.HandshakeMessage = undefined;
@@ -372,15 +387,15 @@ fn performKeyExchange(
             local_msg_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE ..],
             &local_msg.signature,
         );
-        try sendFramed(sock, &local_msg_buf);
+        try sendFramed(sock, &local_msg_buf, verbose);
 
-        std.debug.print("[keyexchange] [initiator] Warte auf Peer-Message...\n", .{});
+        verbosePrint(verbose, "[keyexchange] [initiator] Warte auf Peer-Message...\n", .{});
         const peer_buf = try recvFramed(allocator, sock);
         defer allocator.free(peer_buf);
 
         const expected_msg_len = keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE + keyexchange.SIGNATURE_SIZE;
         if (peer_buf.len != expected_msg_len) {
-            std.debug.print("[keyexchange] Ungültige Message-Länge: {d} (erwartet {d})\n", .{ peer_buf.len, expected_msg_len });
+            std.debug.print("[ERROR] [keyexchange] Ungültige Message-Länge: {d} (erwartet {d})\n", .{ peer_buf.len, expected_msg_len });
             return error.InvalidPeerMessage;
         }
 
@@ -425,42 +440,51 @@ fn performKeyExchange(
             local_msg_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE ..],
             &local_msg.signature,
         );
-        try sendFramed(sock, &local_msg_buf);
+        try sendFramed(sock, &local_msg_buf, verbose);
     }
 
-    std.debug.print("[keyexchange] Verifiziere Peer-Signatur...\n", .{});
+    verbosePrint(verbose, "[keyexchange] Verifiziere Peer-Signatur...\n", .{});
     try peer_msg.verify();
 
-    std.debug.print("[keyexchange] Peer-Identität verifiziert. Leite Session-Keys ab...\n", .{});
-    var session = try keyexchange.completeHandshake(
+    verbosePrint(verbose, "[keyexchange] Peer-Identität verifiziert. Leite Session-Keys ab...\n", .{});
+
+    const session = try keyexchange.completeHandshake(
         local_identity,
         local_ephemeral,
         peer_msg,
         peer_address,
     );
-    defer session.deinit();
 
     var addr_buf: [64]u8 = undefined;
     const addr_str = try sip.identity.formatSipAddress(&addr_buf, session.peer_address);
     std.debug.print("[keyexchange] Peer-Adresse: {s}\n", .{addr_str});
+    std.debug.print("[keyexchange] Connection ID generiert: {d}\n", .{session.conn_id});
 
-    return if (is_initiator) session.tx else session.rx;
+    return session;
 }
 
-fn runServer(io: std.Io, allocator: std.mem.Allocator, port: u16, use_v6: bool, output_path: ?[]const u8, identity_name: []const u8) !void {
+fn runServer(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    port: u16,
+    use_v6: bool,
+    output_path: ?[]const u8,
+    identity_name: []const u8,
+    verbose: bool,
+) !void {
     const identity = try loadOrCreateIdentity(io, allocator, identity_name);
     var addr_buf: [64]u8 = undefined;
     const addr_str = try identity.formatAddress(&addr_buf);
-    std.debug.print("[server] Meine SIP-Adresse: {s}\n", .{addr_str});
+    verbosePrint(verbose, "[server] Meine SIP-Adresse: {s}\n", .{addr_str});
 
-    std.debug.print("[server] Modus: {s}\n", .{if (use_v6) "IPv6 (::)" else "IPv4 (0.0.0.0)"});
+    verbosePrint(verbose, "[server] Modus: {s}\n", .{if (use_v6) "IPv6 (::)" else "IPv4 (0.0.0.0)"});
 
     const listener = if (use_v6)
         try sip.synet.createTcpSocketFamily(std.posix.AF.INET6)
     else
         try sip.synet.createTcpSocket();
     defer sip.synet.close(listener);
-    std.debug.print("[server] Socket erstellt (fd={d})\n", .{listener});
+    verbosePrint(verbose, "[server] Socket erstellt (fd={d})\n", .{listener});
 
     if (use_v6) {
         const bind_addr = sip.synet.buildSockaddrIn6([_]u8{0} ** 16, port);
@@ -469,9 +493,9 @@ fn runServer(io: std.Io, allocator: std.mem.Allocator, port: u16, use_v6: bool, 
         const bind_addr = sip.synet.buildSockaddrIn(.{ 0, 0, 0, 0 }, port);
         try sip.synet.bind(listener, &bind_addr);
     }
-    std.debug.print("[server] gebunden an Port {d}\n", .{port});
+    verbosePrint(verbose, "[server] gebunden an Port {d}\n", .{port});
     try sip.synet.listen(listener, 1);
-    std.debug.print("[server] lauscht (backlog=1)\n", .{});
+    verbosePrint(verbose, "[server] lauscht (backlog=1)\n", .{});
 
     std.debug.print("[server] warte auf Verbindung auf Port {d}...\n", .{port});
 
@@ -498,58 +522,101 @@ fn runServer(io: std.Io, allocator: std.mem.Allocator, port: u16, use_v6: bool, 
     try sip.synet.sendAll(conn, reply);
     std.debug.print("[server] Discovery-Reply gesendet\n", .{});
 
-    const key = try performKeyExchange(io, allocator, conn, identity, false, null);
+    var session = try performKeyExchange(io, allocator, conn, identity, false, null, verbose);
+    defer session.deinit();
+    const key = session.rx;
     std.debug.print("[server] Schlüsselaustausch abgeschlossen.\n", .{});
 
-    const pkt = sip.translation.readInboundPacket(conn, allocator, key) catch |err| {
-        std.debug.print("[server] Lesen/Entschlüsseln fehlgeschlagen: {}\n", .{err});
-        return err;
-    };
-    defer sip.translation.freeInboundPacket(allocator, pkt);
-    const parsed = pkt.parsed;
+    var reassembler = sip.translation.Reassembler.init(io, allocator, "/tmp/sip");
+    defer reassembler.deinit();
 
-    std.debug.print(
-        "[server] SIP-Paket erfolgreich entschlüsselt und geparst.\n" ++
-            "[server]   magic={x} packet_type={d} conn_id={d}\n" ++
-            "[server]   payload: {d} Byte\n",
-        .{
-            parsed.header.outer.magic,
-            parsed.header.outer.command,
-            parsed.header.inner.conn_id,
-            parsed.payload.len,
-        },
-    );
+    const chunk_paths: [][]u8 = blk: {
+        while (true) {
+            const pkt = sip.translation.readInboundPacket(conn, allocator, key) catch |err| {
+                if (err == error.ConnectionClosed or err == error.SocketError) {
+                    std.debug.print("[server] Verbindung geschlossen (keine Chunks mehr).\n", .{});
+                    return error.Aborted;
+                }
+                std.debug.print("[ERROR] [server] Lesen fehlgeschlagen: {}\n", .{err});
+                return err;
+            };
+            defer sip.translation.freeInboundPacket(allocator, pkt);
+
+            switch (try reassembler.feed(pkt.parsed)) {
+                .pending => continue,
+                .complete => |paths| break :blk paths,
+            }
+        }
+    };
+    defer {
+        for (chunk_paths) |p| allocator.free(p);
+        allocator.free(chunk_paths);
+    }
+
+    verbosePrint(verbose, "[server] Transfer komplett, {d} Chunks empfangen.\n", .{chunk_paths.len});
 
     if (output_path) |path| {
-        try writeFileBytes(io, path, parsed.payload);
-        std.debug.print("[server] Payload gespeichert unter: \"{s}\"\n", .{path});
+        var out = try std.Io.Dir.cwd().createFile(io, path, .{});
+        defer out.close(io);
+        var out_buf: [4096]u8 = undefined;
+        var w = out.writer(io, &out_buf);
+
+        for (chunk_paths) |chunk_path| {
+            var cf = try std.Io.Dir.cwd().openFile(io, chunk_path, .{});
+            defer cf.close(io);
+
+            while (true) {
+                var stream_buf: [8192]u8 = undefined;
+
+                const n = try std.posix.read(cf.handle, &stream_buf);
+                if (n == 0) break;
+
+                try w.interface.writeAll(stream_buf[0..n]);
+            }
+
+            try std.Io.Dir.cwd().deleteFile(io, chunk_path);
+        }
+        try w.flush();
+        std.debug.print("[server] Payload erfolgreich gespeichert unter: \"{s}\"\n", .{path});
+    } else {
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+
+        for (chunk_paths) |chunk_path| {
+            var cf = try std.Io.Dir.cwd().openFile(io, chunk_path, .{});
+            defer cf.close(io);
+
+            while (true) {
+                var stream_buf: [8192]u8 = undefined;
+                const n = try std.posix.read(cf.handle, &stream_buf);
+                if (n == 0) break;
+
+                try stdout_writer.interface.writeAll(stream_buf[0..n]);
+            }
+
+            try std.Io.Dir.cwd().deleteFile(io, chunk_path);
+        }
+        try stdout_writer.flush();
     }
 }
 
-fn runClient(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    host: []const u8,
-    port: u16,
-    message: []const u8,
-    identity_name: []const u8,
-) !void {
+fn runClient(io: std.Io, allocator: std.mem.Allocator, host: []const u8, port: u16, message: []const u8, identity_name: []const u8, verbose: bool) !void {
     const identity = try loadOrCreateIdentity(io, allocator, identity_name);
     var addr_buf: [64]u8 = undefined;
     const addr_str = try identity.formatAddress(&addr_buf);
-    std.debug.print("[client] Meine SIP-Adresse: {s}\n", .{addr_str});
+    verbosePrint(verbose, "[client] Meine SIP-Adresse: {s}\n", .{addr_str});
 
     const is_v6 = looksLikeIpv6(host);
-    std.debug.print("[client] erkannte Adressfamilie: {s}\n", .{if (is_v6) "IPv6" else "IPv4"});
+    verbosePrint(verbose, "[client] erkannte Adressfamilie: {s}\n", .{if (is_v6) "IPv6" else "IPv4"});
 
     const sock = if (is_v6)
         try sip.synet.createTcpSocketFamily(std.posix.AF.INET6)
     else
         try sip.synet.createTcpSocket();
     defer sip.synet.close(sock);
-    std.debug.print("[client] Socket erstellt (fd={d})\n", .{sock});
+    verbosePrint(verbose, "[client] Socket erstellt (fd={d})\n", .{sock});
 
-    std.debug.print("[client] verbinde zu {s}:{d}...\n", .{ host, port });
+    verbosePrint(verbose, "[client] verbinde zu {s}:{d}...\n", .{ host, port });
 
     if (is_v6) {
         const ip6 = try parseIpv6(host);
@@ -557,7 +624,7 @@ fn runClient(
         try sip.synet.connect6(sock, &addr6);
     } else {
         const ip4 = try parseIpv4(host);
-        std.debug.print("[client] geparste IPv4-Bytes: {d}.{d}.{d}.{d}\n", .{ ip4[0], ip4[1], ip4[2], ip4[3] });
+        verbosePrint(verbose, "[client] geparste IPv4-Bytes: {d}.{d}.{d}.{d}\n", .{ ip4[0], ip4[1], ip4[2], ip4[3] });
         const addr4 = sip.synet.buildSockaddrIn(ip4, port);
         try sip.synet.connect(sock, &addr4);
     }
@@ -578,26 +645,47 @@ fn runClient(
 
     var peer_address: [16]u8 = undefined;
     @memcpy(&peer_address, reply_buf[2..18]);
-    std.debug.print("[client] Peer SIP-Adresse: {x}\n", .{peer_address});
+    verbosePrint(verbose, "[client] Peer SIP-Adresse: {x}\n", .{peer_address});
 
-    std.debug.print("[client] verbunden, starte Schlüsselaustausch...\n", .{});
-    const key = try performKeyExchange(io, allocator, sock, identity, true, peer_address);
+    verbosePrint(verbose, "[client] verbunden, starte Schlüsselaustausch...\n", .{});
+    var session = try performKeyExchange(io, allocator, sock, identity, true, peer_address, verbose);
+    defer session.deinit();
     std.debug.print("[client] Schlüsselaustausch abgeschlossen.\n", .{});
 
+    const key = session.tx;
+
     const resolved = try resolveMessage(io, allocator, message);
+    verbosePrint(verbose, "[debug] resolving allocated \n", .{});
     defer resolved.deinit(allocator);
     const payload = resolved.bytes;
+    verbosePrint(verbose, "[debug] allocated resolved \n", .{});
 
     const mesh_src = identity.address[0..16].*;
     const mesh_dst = peer_address;
 
-    const wire = try sip.translation.buildOutboundPacket(io, allocator, mesh_src, mesh_dst, 1, .Data, payload, key);
-    defer allocator.free(wire);
-    std.debug.print("[client] sende {d} Byte (inkl. Längenpräfix) via translation.buildOutboundPacket...\n", .{wire.len});
-    try sip.synet.sendAll(sock, wire);
-    std.debug.print("[client] gesendet. Fertig.\n", .{});
-}
+    verbosePrint(verbose, "[client] Teile Payload mit sip.fragmentation auf...\n", .{});
 
+    const packet_list = try sip.fragmentation.fragmentPayload(
+        io,
+        allocator,
+        mesh_src,
+        mesh_dst,
+        session.conn_id,
+        payload,
+        key,
+    );
+    defer packet_list.deinit();
+
+    verbosePrint(verbose, "[client] Payload in {d} Chunks aufgeteilt. Sende...\n", .{packet_list.items.len});
+
+    for (packet_list.items, 0..) |wire_packet, idx| {
+        verbosePrint(verbose, "[client] Sende Paket {d}/{d} (Größe: {d} Bytes)...\n", .{ idx + 1, packet_list.items.len, wire_packet.len });
+
+        try sip.synet.sendAll(sock, wire_packet);
+    }
+
+    std.debug.print("[client] Transfer abgeschlossen. Alle Pakete gesendet.\n", .{});
+}
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -611,7 +699,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     switch (args.mode) {
-        .server => try runServer(io, gpa, args.port, args.use_v6, args.output_path, args.identity_name),
-        .client => try runClient(io, gpa, args.host, args.port, args.message, args.identity_name),
+        .server => try runServer(io, gpa, args.port, args.use_v6, args.output_path, args.identity_name, args.verbose),
+        .client => try runClient(io, gpa, args.host, args.port, args.message, args.identity_name, args.verbose),
     }
 }

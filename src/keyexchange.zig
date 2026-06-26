@@ -97,6 +97,7 @@ pub const SessionKeys = struct {
     tx: [DERIVED_KEY_SIZE]u8,
     rx: [DERIVED_KEY_SIZE]u8,
     peer_address: [SIP_ADDRESS_SIZE]u8,
+    conn_id: u64,
 
     pub fn deinit(self: *SessionKeys) void {
         std.crypto.secureZero(u8, &self.tx);
@@ -149,6 +150,10 @@ pub fn completeHandshake(
     HkdfSha256.expand(&key_a_to_b, "sip-handshake a->b", prk);
     HkdfSha256.expand(&key_b_to_a, "sip-handshake b->a", prk);
 
+    var conn_id_bytes: [8]u8 = undefined;
+    HkdfSha256.expand(&conn_id_bytes, "sip-handshake conn-id", prk);
+    const conn_id = std.mem.readInt(u64, &conn_id_bytes, .big);
+
     const tx = if (a_first) key_a_to_b else key_b_to_a;
     const rx = if (a_first) key_b_to_a else key_a_to_b;
 
@@ -156,6 +161,7 @@ pub fn completeHandshake(
         .tx = tx,
         .rx = rx,
         .peer_address = peer_address,
+        .conn_id = conn_id,
     };
 }
 

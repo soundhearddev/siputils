@@ -34,7 +34,9 @@ pub fn main(init: std.process.Init) !void {
             const client = try sip.synet.accept(sock);
             std.debug.print("[SERVER] Neue Verbindung akzeptiert! Client-FD: {}\n", .{client});
 
-            handleClient(client) catch |err| {
+            handleClient(
+                client,
+            ) catch |err| {
                 std.debug.print("[SERVER] [FEHLER] Fehler bei Client-Handling: {}\n", .{err});
                 sip.synet.close(client);
             };
@@ -121,6 +123,9 @@ fn handleClient(sock: sip.synet.Socket) !void {
     for (reply_pkt) |b| std.debug.print("{X:0>2} ", .{b});
     std.debug.print("\n", .{});
 
-    try sip.synet.sendAll(sock, reply_pkt);
+    try sip.synet.sendAll(
+        sock,
+        reply_pkt,
+    );
     std.debug.print("[SERVER_WORKER] Reply erfolgreich gesendet.\n", .{});
 }
