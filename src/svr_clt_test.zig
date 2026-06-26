@@ -1,6 +1,7 @@
 const std = @import("std");
 const sip = @import("sip");
 const keyexchange = @import("keyexchange.zig");
+const keystore = @import("keystore.zig");
 
 const DEFAULT_PORT: u16 = 9443;
 
@@ -330,7 +331,7 @@ fn loadOrCreateIdentity(
     allocator: std.mem.Allocator,
     identity_name: []const u8,
 ) !keyexchange.Identity {
-    if (sip.identity.identityExists(io, identity_name)) {
+    if (keystore.identityExists(io, identity_name)) {
         std.debug.print("[sip] Identität '{s}' existiert, laden...\n", .{identity_name});
         const password = try promptPassword(allocator, "[sip] Passwort");
         defer allocator.free(password);
@@ -342,7 +343,7 @@ fn loadOrCreateIdentity(
     } else {
         std.debug.print("[sip] Identität '{s}' existiert nicht, erstelle neue...\n", .{identity_name});
 
-        if (!sip.identity.validName(identity_name)) {
+        if (!keystore.validName(identity_name)) {
             std.debug.print("[sip] Ungültiger Identitätsname (erlaubt: alphanumerisch, -, _, .)\n", .{});
             return error.InvalidIdentityName;
         }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const sip = @import("sip");
+const keystore = @import("keystore.zig");
 const Io = std.Io;
 
 const CliError = error{
@@ -94,7 +95,7 @@ const ListCtx = struct {
     idx: usize = 1,
 };
 
-fn printIdentityEntry(ctx: *ListCtx, entry: sip.identity.IdentityEntry) !void {
+fn printIdentityEntry(ctx: *ListCtx, entry: keystore.IdentityEntry) !void {
     if (!entry.valid) {
         try ctx.stdout.print("{d}: {s}: <kein gültiger public key>\n", .{ ctx.idx, entry.name() });
         ctx.idx += 1;
@@ -111,7 +112,7 @@ fn printIdentityEntry(ctx: *ListCtx, entry: sip.identity.IdentityEntry) !void {
         try ctx.stdout.print("    public-key : {x}\n", .{entry.public});
         try ctx.stdout.print("    base-addr  : {x}\n", .{base});
         var dir_buf: [300]u8 = undefined;
-        const dpath = try sip.identity.identityDir(&dir_buf, entry.name());
+        const dpath = try keystore.identityDir(&dir_buf, entry.name());
         try ctx.stdout.print("    keydir     : {s}\n", .{dpath});
         try ctx.stdout.writeAll("\n");
     } else {
@@ -123,12 +124,12 @@ fn printIdentityEntry(ctx: *ListCtx, entry: sip.identity.IdentityEntry) !void {
 fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
     var ctx = ListCtx{ .stdout = stdout, .verbose = verbose };
 
-    sip.identity.forEachIdentity(io, *ListCtx, &ctx, struct {
-        fn cb(c: *ListCtx, entry: sip.identity.IdentityEntry) !void {
+    keystore.forEachIdentity(io, *ListCtx, &ctx, struct {
+        fn cb(c: *ListCtx, entry: keystore.IdentityEntry) !void {
             try printIdentityEntry(c, entry);
         }
     }.cb) catch |err| switch (err) {
-        sip.identity.ListError.KeyRootMissing => {
+        keystore.ListError.KeyRootMissing => {
             try stdout.writeAll("Keine Identitäten gefunden. (Ordner 'keys/' existiert nicht)\n");
             try stdout.writeAll("Erstelle eine mit: sipctl new <name>\n");
             try stdout.flush();
@@ -146,7 +147,7 @@ fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
 
 fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Map, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
-    if (!sip.identity.validName(name)) {
+    if (!keystore.validName(name)) {
         try stdout.writeAll("Fehler: Ungültiger Name (nur a-z, A-Z, 0-9, -, _, .)\n");
         try stdout.flush();
         return;
@@ -155,8 +156,8 @@ fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Ma
     var pw_buf: [256]u8 = undefined;
     const password = try resolvePassword(io, stdout, env_map, .{}, &pw_buf, true);
 
-    const kp = sip.identity.createIdentity(io, name, password) catch |err| switch (err) {
-        sip.identity.SipError.IdentityAlreadyExists => {
+    const kp = keystore.createIdentity(io, name, password) catch |err| switch (err) {
+        keystore.KeystoreError.IdentityAlreadyExists => {
             try stdout.print("Fehler: Identität '{s}' existiert bereits.\n", .{name});
             try stdout.flush();
             return;
@@ -177,8 +178,8 @@ fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Ma
 fn cmdShow(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
 
-    const pub_bytes = sip.identity.loadPublicOnly(io, name) catch |err| switch (err) {
-        sip.identity.SipError.IdentityNotFound => {
+    const pub_bytes = keystore.loadPublicOnly(io, name) catch |err| switch (err) {
+        keystore.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
@@ -190,7 +191,7 @@ fn cmdShow(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const addr = try sip.identity.formatSipAddress(&addr_buf, base);
 
     var dir_buf: [300]u8 = undefined;
-    const dpath = try sip.identity.identityDir(&dir_buf, name);
+    const dpath = try keystore.identityDir(&dir_buf, name);
 
     try stdout.print("name        : {s}\n", .{name});
     try stdout.print("sip-address : {s}\n", .{addr});
@@ -202,23 +203,30 @@ fn cmdShow(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
 
 fn cmdId(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
-    const pub_bytes = sip.identity.loadPublicOnly(io, name) catch |err| switch (err) {
-        sip.identity.SipError.IdentityNotFound => {
+    const pub_bytes = keystore.loadPublicOnly(io, name) catch |err| switch (err) {
+        keystore.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
         },
         else => return err,
     };
-    const id = sip.identity.genId(io, pub_bytes);
+
+    // Die ID-Generierung selbst (Hashing) ist Protokoll-Logik (sip.identity.genId),
+    // die Beschaffung von sicherem Zufall ist Anwendungssache und bleibt hier.
+    var nonce: [16]u8 = undefined;
+    const rng_src: std.Random.IoSource = .{ .io = io };
+    rng_src.interface().bytes(&nonce);
+
+    const id = sip.identity.genId(pub_bytes, nonce);
     try stdout.print("{x}\n", .{id});
     try stdout.flush();
 }
 
 fn cmdExport(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
-    const pub_bytes = sip.identity.loadPublicOnly(io, name) catch |err| switch (err) {
-        sip.identity.SipError.IdentityNotFound => {
+    const pub_bytes = keystore.loadPublicOnly(io, name) catch |err| switch (err) {
+        keystore.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
@@ -235,8 +243,8 @@ fn cmdExport(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
 fn cmdRemove(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
 
-    sip.identity.deleteIdentity(io, name) catch |err| switch (err) {
-        sip.identity.SipError.IdentityNotFound => {
+    keystore.deleteIdentity(io, name) catch |err| switch (err) {
+        keystore.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
@@ -261,8 +269,8 @@ fn cmdPasswd(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ
     var new_pw_buf: [256]u8 = undefined;
     const new_pw = try resolvePassword(io, stdout, env_map, .{}, &new_pw_buf, true);
 
-    _ = sip.identity.changePassword(io, name, old_pw, new_pw) catch |err| switch (err) {
-        sip.identity.SipError.IdentityNotFound => {
+    _ = keystore.changePassword(io, name, old_pw, new_pw) catch |err| switch (err) {
+        keystore.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;

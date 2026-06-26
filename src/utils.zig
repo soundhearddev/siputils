@@ -1,5 +1,4 @@
 const std = @import("std");
-extern fn get_unix_time() u32;
 
 pub fn isRoot() void {
     const uid = std.os.linux.getuid();
@@ -94,15 +93,29 @@ pub fn getPrefix(gpa: std.mem.Allocator, io: std.Io, iface: []const u8) ![]u8 {
     return error.NoPrefixFound;
 }
 
-pub fn generateAddress(gpa: std.mem.Allocator, prefix: []const u8) ![]u8 {
-    const seed: u64 = @as(u64, get_unix_time());
+pub fn generateAddress(
+    gpa: std.mem.Allocator,
+    prefix: []const u8,
+    init: std.process.Init,
+) ![]u8 {
+    const io = init.io;
+
+    const ts = std.Io.Clock.real.now(io);
+    const seed: u64 = @intCast(ts.nanoseconds);
+
     var prng = std.Random.DefaultPrng.init(seed);
     const rng = prng.random();
+
     const a = rng.int(u16);
     const b = rng.int(u16);
     const c = rng.int(u16);
     const d = rng.int(u16);
-    return std.fmt.allocPrint(gpa, "{s}{x:0>4}:{x:0>4}:{x:0>4}:{x:0>4}", .{ prefix, a, b, c, d });
+
+    return std.fmt.allocPrint(
+        gpa,
+        "{s}{x:0>4}:{x:0>4}:{x:0>4}:{x:0>4}",
+        .{ prefix, a, b, c, d },
+    );
 }
 
 pub fn addAddress(gpa: std.mem.Allocator, io: std.Io, iface: []const u8, address: []const u8, ttl: ?u64) !bool {
@@ -150,12 +163,6 @@ pub fn currentAddresses(gpa: std.mem.Allocator, io: std.Io, iface: []const u8) !
     }
     return set;
 }
-
-
-
-
-
-
 
 pub fn randomMeshAddr(io: std.Io) [16]u8 {
     const rng_src: std.Random.IoSource = .{ .io = io };

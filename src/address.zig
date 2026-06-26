@@ -5,22 +5,15 @@ const DEBUG = true;
 const ANZAHL_IPS: usize = 1;
 const LEBENSDAUER_SEKUNDEN: ?u64 = 60;
 
-fn buildAddress(
-    gpa: std.mem.Allocator,
-    io: std.Io,
-    count: usize,
-    prefix: []const u8,
-    before: *std.StringHashMap(void),
-    iface: []const u8,
-    ttl: ?u64,
-) !std.ArrayListUnmanaged([]const u8) {
+fn buildAddress(gpa: std.mem.Allocator, io: std.Io, count: usize, prefix: []const u8, before: *std.StringHashMap(void), iface: []const u8, ttl: ?u64, init: std.process.Init) !std.ArrayListUnmanaged([]const u8) {
     var created: std.ArrayListUnmanaged([]const u8) = .empty;
 
     for (0..count) |_| {
-        var new_addr = try utils.generateAddress(gpa, prefix);
+        var new_addr = try utils.generateAddress(gpa, prefix, init);
+
         while (before.contains(new_addr)) {
             gpa.free(new_addr);
-            new_addr = try utils.generateAddress(gpa, prefix);
+            new_addr = try utils.generateAddress(gpa, prefix, init);
         }
 
         const success = try utils.addAddress(gpa, io, iface, new_addr, ttl);
@@ -79,6 +72,6 @@ pub fn main(init: std.process.Init) !void {
 
     std.debug.print("\nStarte Erstellung von {d} Adressen auf '{s}'...\n", .{ ANZAHL_IPS, interface });
 
-    var created = try buildAddress(gpa, io, ANZAHL_IPS, prefix, &already_assigned, interface, LEBENSDAUER_SEKUNDEN);
+    var created = try buildAddress(gpa, io, ANZAHL_IPS, prefix, &already_assigned, interface, LEBENSDAUER_SEKUNDEN, init);
     defer created.deinit(gpa);
 }

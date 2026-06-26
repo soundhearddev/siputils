@@ -120,6 +120,32 @@ pub fn build(b: *std.Build) void {
         .dependOn(&run_discovery_test.step);
 
     // ─────────────────────────────────────────────
+    // address
+    // ─────────────────────────────────────────────
+    const address_mod = b.createModule(.{
+        .root_source_file = b.path("src/address.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    address_mod.addImport("sip", sip_mod);
+
+    const address = b.addExecutable(.{
+        .name = "address",
+        .root_module = address_mod,
+    });
+
+    b.installArtifact(address);
+
+    const run_address = b.addRunArtifact(address);
+    run_address.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| run_address.addArgs(args);
+
+    b.step("run-address", "Run address")
+        .dependOn(&run_address.step);
+
+    // ─────────────────────────────────────────────
     // sniffer
     // ─────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const sip = @import("sip");
+const keystore = @import("keystore.zig");
 
 const X25519 = std.crypto.dh.X25519;
 const Ed25519 = std.crypto.sign.Ed25519;
@@ -24,12 +25,12 @@ pub const Identity = struct {
     address: [SIP_ADDRESS_SIZE]u8,
 
     pub fn create(io: std.Io, name: []const u8, password: []const u8) !Identity {
-        const keys = try sip.identity.createIdentity(io, name, password);
+        const keys = try keystore.createIdentity(io, name, password);
         return .{ .keys = keys, .address = sip.identity.baseAddress(keys.public) };
     }
 
     pub fn load(io: std.Io, name: []const u8, password: []const u8) !Identity {
-        const keys = try sip.identity.loadIdentity(io, name, password);
+        const keys = try keystore.loadIdentity(io, name, password);
         return .{ .keys = keys, .address = sip.identity.baseAddress(keys.public) };
     }
 
