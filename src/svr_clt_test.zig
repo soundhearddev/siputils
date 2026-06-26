@@ -1,6 +1,5 @@
 const std = @import("std");
 const sip = @import("sip");
-const keyexchange = @import("keyexchange.zig");
 const keystore = @import("keystore.zig");
 
 const DEFAULT_PORT: u16 = 9443;
@@ -330,13 +329,13 @@ fn loadOrCreateIdentity(
     io: std.Io,
     allocator: std.mem.Allocator,
     identity_name: []const u8,
-) !keyexchange.Identity {
+) !sip.identity.KeyPair {
     if (keystore.identityExists(io, identity_name)) {
         std.debug.print("[sip] Identität '{s}' existiert, laden...\n", .{identity_name});
         const password = try promptPassword(allocator, "[sip] Passwort");
         defer allocator.free(password);
 
-        return keyexchange.Identity.load(io, identity_name, password) catch |err| {
+        return keystore.loadIdentity(io, identity_name, password) catch |err| {
             std.debug.print("[sip] Fehler beim Laden der Identität: {}\n", .{err});
             return err;
         };
@@ -359,33 +358,33 @@ fn loadOrCreateIdentity(
             return error.PasswordMismatch;
         }
 
-        return keyexchange.Identity.create(io, identity_name, password) catch |err| {
+        // NEU
+        return keystore.createIdentity(io, identity_name, password) catch |err| {
             std.debug.print("[sip] Fehler beim Erstellen der Identität: {}\n", .{err});
             return err;
         };
     }
 }
 
-fn performKeyExchange(io: std.Io, allocator: std.mem.Allocator, sock: sip.synet.Socket, local_identity: keyexchange.Identity, is_initiator: bool, peer_address: ?[16]u8, verbose: bool) !keyexchange.SessionKeys {
+fn performKeyExchange(io: std.Io, allocator: std.mem.Allocator, sock: sip.synet.Socket, local_keys: sip.identity.KeyPair, local_address: [16]u8, is_initiator: bool, peer_address: ?[16]u8, verbose: bool) !sip.handshake.SessionKeys {
     verbosePrint(verbose, "[keyexchange] Generiere ephemeres Schlüsselpaar...\n", .{});
-    var local_ephemeral = try keyexchange.EphemeralKeyPair.generate(io);
+    var local_ephemeral = try sip.handshake.EphemeralKeyPair.generate(io);
     defer local_ephemeral.deinit();
 
     verbosePrint(verbose, "[keyexchange] Erstelle HandshakeMessage...\n", .{});
-    const local_msg = try keyexchange.HandshakeMessage.create(local_identity, local_ephemeral);
-
-    var peer_msg: keyexchange.HandshakeMessage = undefined;
+    const local_msg = try sip.handshake.HandshakeMessage.create(local_keys, local_ephemeral);
+    var peer_msg: sip.handshake.HandshakeMessage = undefined;
 
     if (is_initiator) {
         std.debug.print("[keyexchange] [initiator] Sende HandshakeMessage...\n", .{});
-        var local_msg_buf: [keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE + keyexchange.SIGNATURE_SIZE]u8 = undefined;
-        @memcpy(local_msg_buf[0..keyexchange.IDENTITY_PUBLIC_KEY_SIZE], &local_msg.identity_public_key);
+        var local_msg_buf: [sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE + sip.handshake.SIGNATURE_SIZE]u8 = undefined;
+        @memcpy(local_msg_buf[0..sip.handshake.IDENTITY_PUBLIC_KEY_SIZE], &local_msg.identity_public_key);
         @memcpy(
-            local_msg_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE .. keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE],
+            local_msg_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE .. sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE],
             &local_msg.ephemeral_public_key,
         );
         @memcpy(
-            local_msg_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE ..],
+            local_msg_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE ..],
             &local_msg.signature,
         );
         try sendFramed(sock, &local_msg_buf, verbose);
@@ -394,51 +393,51 @@ fn performKeyExchange(io: std.Io, allocator: std.mem.Allocator, sock: sip.synet.
         const peer_buf = try recvFramed(allocator, sock);
         defer allocator.free(peer_buf);
 
-        const expected_msg_len = keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE + keyexchange.SIGNATURE_SIZE;
+        const expected_msg_len = sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE + sip.handshake.SIGNATURE_SIZE;
         if (peer_buf.len != expected_msg_len) {
             std.debug.print("[ERROR] [keyexchange] Ungültige Message-Länge: {d} (erwartet {d})\n", .{ peer_buf.len, expected_msg_len });
             return error.InvalidPeerMessage;
         }
 
-        @memcpy(&peer_msg.identity_public_key, peer_buf[0..keyexchange.IDENTITY_PUBLIC_KEY_SIZE]);
+        @memcpy(&peer_msg.identity_public_key, peer_buf[0..sip.handshake.IDENTITY_PUBLIC_KEY_SIZE]);
         @memcpy(
             &peer_msg.ephemeral_public_key,
-            peer_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE .. keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE],
+            peer_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE .. sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE],
         );
         @memcpy(
             &peer_msg.signature,
-            peer_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE ..],
+            peer_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE ..],
         );
     } else {
         std.debug.print("[keyexchange] [responder] Warte auf Peer-Message...\n", .{});
         const peer_buf = try recvFramed(allocator, sock);
         defer allocator.free(peer_buf);
 
-        const expected_msg_len = keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE + keyexchange.SIGNATURE_SIZE;
+        const expected_msg_len = sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE + sip.handshake.SIGNATURE_SIZE;
         if (peer_buf.len != expected_msg_len) {
             std.debug.print("[keyexchange] Ungültige Message-Länge: {d} (erwartet {d})\n", .{ peer_buf.len, expected_msg_len });
             return error.InvalidPeerMessage;
         }
 
-        @memcpy(&peer_msg.identity_public_key, peer_buf[0..keyexchange.IDENTITY_PUBLIC_KEY_SIZE]);
+        @memcpy(&peer_msg.identity_public_key, peer_buf[0..sip.handshake.IDENTITY_PUBLIC_KEY_SIZE]);
         @memcpy(
             &peer_msg.ephemeral_public_key,
-            peer_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE .. keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE],
+            peer_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE .. sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE],
         );
         @memcpy(
             &peer_msg.signature,
-            peer_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE ..],
+            peer_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE ..],
         );
 
         std.debug.print("[keyexchange] [responder] Sende HandshakeMessage...\n", .{});
-        var local_msg_buf: [keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE + keyexchange.SIGNATURE_SIZE]u8 = undefined;
-        @memcpy(local_msg_buf[0..keyexchange.IDENTITY_PUBLIC_KEY_SIZE], &local_msg.identity_public_key);
+        var local_msg_buf: [sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE + sip.handshake.SIGNATURE_SIZE]u8 = undefined;
+        @memcpy(local_msg_buf[0..sip.handshake.IDENTITY_PUBLIC_KEY_SIZE], &local_msg.identity_public_key);
         @memcpy(
-            local_msg_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE .. keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE],
+            local_msg_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE .. sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE],
             &local_msg.ephemeral_public_key,
         );
         @memcpy(
-            local_msg_buf[keyexchange.IDENTITY_PUBLIC_KEY_SIZE + keyexchange.PUBLIC_KEY_SIZE ..],
+            local_msg_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE ..],
             &local_msg.signature,
         );
         try sendFramed(sock, &local_msg_buf, verbose);
@@ -449,8 +448,9 @@ fn performKeyExchange(io: std.Io, allocator: std.mem.Allocator, sock: sip.synet.
 
     verbosePrint(verbose, "[keyexchange] Peer-Identität verifiziert. Leite Session-Keys ab...\n", .{});
 
-    const session = try keyexchange.completeHandshake(
-        local_identity,
+    const session = try sip.handshake.completeHandshake(
+        local_keys,
+        local_address,
         local_ephemeral,
         peer_msg,
         peer_address,
@@ -470,12 +470,13 @@ fn runServer(
     port: u16,
     use_v6: bool,
     output_path: ?[]const u8,
-    identity_name: []const u8,
     verbose: bool,
+    keys: sip.identity.KeyPair,
 ) !void {
-    const identity = try loadOrCreateIdentity(io, allocator, identity_name);
     var addr_buf: [64]u8 = undefined;
-    const addr_str = try identity.formatAddress(&addr_buf);
+    const addr = sip.identity.baseAddress(keys.public);
+    const addr_str = try sip.identity.formatSipAddress(&addr_buf, addr);
+
     verbosePrint(verbose, "[server] Meine SIP-Adresse: {s}\n", .{addr_str});
 
     verbosePrint(verbose, "[server] Modus: {s}\n", .{if (use_v6) "IPv6 (::)" else "IPv4 (0.0.0.0)"});
@@ -517,13 +518,13 @@ fn runServer(
 
     var reply_buf: [34]u8 = undefined;
     var srv_src: [16]u8 = undefined;
-    @memcpy(&srv_src, identity.address[0..16]);
+    @memcpy(&srv_src, &addr);
 
     const reply = try sip.header.buildDiscoveryPacket(&reply_buf, srv_src, disc_src);
     try sip.synet.sendAll(conn, reply);
     std.debug.print("[server] Discovery-Reply gesendet\n", .{});
 
-    var session = try performKeyExchange(io, allocator, conn, identity, false, null, verbose);
+    var session = try performKeyExchange(io, allocator, conn, keys, addr, false, null, verbose);
     defer session.deinit();
     const key = session.rx;
     std.debug.print("[server] Schlüsselaustausch abgeschlossen.\n", .{});
@@ -556,6 +557,7 @@ fn runServer(
 
     verbosePrint(verbose, "[server] Transfer komplett, {d} Chunks empfangen.\n", .{chunk_paths.len});
 
+    // TODO: OUTPUT handling verbessern und eifnach FIXEN!!!!
     if (output_path) |path| {
         var out = try std.Io.Dir.cwd().createFile(io, path, .{});
         defer out.close(io);
@@ -602,9 +604,10 @@ fn runServer(
 }
 
 fn runClient(io: std.Io, allocator: std.mem.Allocator, host: []const u8, port: u16, message: []const u8, identity_name: []const u8, verbose: bool) !void {
-    const identity = try loadOrCreateIdentity(io, allocator, identity_name);
+    const keys = try loadOrCreateIdentity(io, allocator, identity_name);
     var addr_buf: [64]u8 = undefined;
-    const addr_str = try identity.formatAddress(&addr_buf);
+    const local_addr = sip.identity.baseAddress(keys.public);
+    const addr_str = try sip.identity.formatSipAddress(&addr_buf, local_addr);
     verbosePrint(verbose, "[client] Meine SIP-Adresse: {s}\n", .{addr_str});
 
     const is_v6 = looksLikeIpv6(host);
@@ -633,7 +636,7 @@ fn runClient(io: std.Io, allocator: std.mem.Allocator, host: []const u8, port: u
 
     var disc_buf: [sip.header.OUTER_HEADER_SIZE]u8 = undefined;
     var src: [16]u8 = undefined;
-    @memcpy(&src, identity.address[0..16]);
+    @memcpy(&src, &local_addr);
     const disc_pkt = try sip.header.buildDiscoveryPacket(&disc_buf, src, [_]u8{0} ** 16);
 
     try sip.synet.sendAll(sock, disc_pkt);
@@ -649,7 +652,7 @@ fn runClient(io: std.Io, allocator: std.mem.Allocator, host: []const u8, port: u
     verbosePrint(verbose, "[client] Peer SIP-Adresse: {x}\n", .{peer_address});
 
     verbosePrint(verbose, "[client] verbunden, starte Schlüsselaustausch...\n", .{});
-    var session = try performKeyExchange(io, allocator, sock, identity, true, peer_address, verbose);
+    var session = try performKeyExchange(io, allocator, sock, keys, local_addr, true, peer_address, verbose);
     defer session.deinit();
     std.debug.print("[client] Schlüsselaustausch abgeschlossen.\n", .{});
 
@@ -661,7 +664,7 @@ fn runClient(io: std.Io, allocator: std.mem.Allocator, host: []const u8, port: u
     const payload = resolved.bytes;
     verbosePrint(verbose, "[debug] allocated resolved \n", .{});
 
-    const mesh_src = identity.address[0..16].*;
+    const mesh_src = local_addr;
     const mesh_dst = peer_address;
 
     verbosePrint(verbose, "[client] Teile Payload mit sip.fragmentation auf...\n", .{});
@@ -700,7 +703,10 @@ pub fn main(init: std.process.Init) !void {
     };
 
     switch (args.mode) {
-        .server => try runServer(io, gpa, args.port, args.use_v6, args.output_path, args.identity_name, args.verbose),
+        .server => {
+            const keys = try loadOrCreateIdentity(io, gpa, args.identity_name);
+            try runServer(io, gpa, args.port, args.use_v6, args.output_path, args.verbose, keys);
+        },
         .client => try runClient(io, gpa, args.host, args.port, args.message, args.identity_name, args.verbose),
     }
 }
