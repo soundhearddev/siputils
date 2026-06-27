@@ -146,6 +146,32 @@ pub fn build(b: *std.Build) void {
         .dependOn(&run_address.step);
 
     // ─────────────────────────────────────────────
+    // sipd
+    // ─────────────────────────────────────────────
+    const sipd_mod = b.createModule(.{
+        .root_source_file = b.path("src/sipd.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    sipd_mod.addImport("sip", sip_mod);
+
+    const sipd = b.addExecutable(.{
+        .name = "sipd",
+        .root_module = sipd_mod,
+    });
+
+    b.installArtifact(sipd);
+
+    const run_sipd = b.addRunArtifact(sipd);
+    run_sipd.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| run_sipd.addArgs(args);
+
+    b.step("run-sipd", "Run sipd")
+        .dependOn(&run_sipd.step);
+
+    // ─────────────────────────────────────────────
     // sniffer
     // ─────────────────────────────────────────────
 

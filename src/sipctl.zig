@@ -1,6 +1,6 @@
 const std = @import("std");
 const sip = @import("sip");
-const keystore = @import("keystore.zig");
+const keymng = @import("keymng.zig");
 const Io = std.Io;
 
 const CliError = error{
@@ -95,7 +95,7 @@ const ListCtx = struct {
     idx: usize = 1,
 };
 
-fn printIdentityEntry(ctx: *ListCtx, entry: keystore.IdentityEntry) !void {
+fn printIdentityEntry(ctx: *ListCtx, entry: keymng.IdentityEntry) !void {
     if (!entry.valid) {
         try ctx.stdout.print("{d}: {s}: <kein gültiger public key>\n", .{ ctx.idx, entry.name() });
         ctx.idx += 1;
@@ -112,7 +112,7 @@ fn printIdentityEntry(ctx: *ListCtx, entry: keystore.IdentityEntry) !void {
         try ctx.stdout.print("    public-key : {x}\n", .{entry.public});
         try ctx.stdout.print("    base-addr  : {x}\n", .{base});
         var dir_buf: [300]u8 = undefined;
-        const dpath = try keystore.identityDir(&dir_buf, entry.name());
+        const dpath = try keymng.identityDir(&dir_buf, entry.name());
         try ctx.stdout.print("    keydir     : {s}\n", .{dpath});
         try ctx.stdout.writeAll("\n");
     } else {
@@ -124,12 +124,12 @@ fn printIdentityEntry(ctx: *ListCtx, entry: keystore.IdentityEntry) !void {
 fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
     var ctx = ListCtx{ .stdout = stdout, .verbose = verbose };
 
-    keystore.forEachIdentity(io, *ListCtx, &ctx, struct {
-        fn cb(c: *ListCtx, entry: keystore.IdentityEntry) !void {
+    keymng.forEachIdentity(io, *ListCtx, &ctx, struct {
+        fn cb(c: *ListCtx, entry: keymng.IdentityEntry) !void {
             try printIdentityEntry(c, entry);
         }
     }.cb) catch |err| switch (err) {
-        keystore.ListError.KeyRootMissing => {
+        keymng.ListError.KeyRootMissing => {
             try stdout.writeAll("Keine Identitäten gefunden. (Ordner 'keys/' existiert nicht)\n");
             try stdout.writeAll("Erstelle eine mit: sipctl new <name>\n");
             try stdout.flush();
@@ -147,7 +147,7 @@ fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
 
 fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Map, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
-    if (!keystore.validName(name)) {
+    if (!keymng.validName(name)) {
         try stdout.writeAll("Fehler: Ungültiger Name (nur a-z, A-Z, 0-9, -, _, .)\n");
         try stdout.flush();
         return;
@@ -156,8 +156,8 @@ fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Ma
     var pw_buf: [256]u8 = undefined;
     const password = try resolvePassword(io, stdout, env_map, .{}, &pw_buf, true);
 
-    const kp = keystore.createIdentity(io, name, password) catch |err| switch (err) {
-        keystore.KeystoreError.IdentityAlreadyExists => {
+    const kp = keymng.createIdentity(io, name, password) catch |err| switch (err) {
+        keymng.KeystoreError.IdentityAlreadyExists => {
             try stdout.print("Fehler: Identität '{s}' existiert bereits.\n", .{name});
             try stdout.flush();
             return;
@@ -178,8 +178,8 @@ fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Ma
 fn cmdShow(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
 
-    const pub_bytes = keystore.loadPublicOnly(io, name) catch |err| switch (err) {
-        keystore.KeystoreError.IdentityNotFound => {
+    const pub_bytes = keymng.loadPublicOnly(io, name) catch |err| switch (err) {
+        keymng.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
@@ -191,7 +191,7 @@ fn cmdShow(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const addr = try sip.identity.formatSipAddress(&addr_buf, base);
 
     var dir_buf: [300]u8 = undefined;
-    const dpath = try keystore.identityDir(&dir_buf, name);
+    const dpath = try keymng.identityDir(&dir_buf, name);
 
     try stdout.print("name        : {s}\n", .{name});
     try stdout.print("sip-address : {s}\n", .{addr});
@@ -203,8 +203,8 @@ fn cmdShow(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
 
 fn cmdId(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
-    const pub_bytes = keystore.loadPublicOnly(io, name) catch |err| switch (err) {
-        keystore.KeystoreError.IdentityNotFound => {
+    const pub_bytes = keymng.loadPublicOnly(io, name) catch |err| switch (err) {
+        keymng.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
@@ -223,8 +223,8 @@ fn cmdId(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
 
 fn cmdExport(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
-    const pub_bytes = keystore.loadPublicOnly(io, name) catch |err| switch (err) {
-        keystore.KeystoreError.IdentityNotFound => {
+    const pub_bytes = keymng.loadPublicOnly(io, name) catch |err| switch (err) {
+        keymng.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
@@ -241,8 +241,8 @@ fn cmdExport(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
 fn cmdRemove(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     const name = args.next() orelse return CliError.MissingArgument;
 
-    keystore.deleteIdentity(io, name) catch |err| switch (err) {
-        keystore.KeystoreError.IdentityNotFound => {
+    keymng.deleteIdentity(io, name) catch |err| switch (err) {
+        keymng.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
@@ -267,8 +267,8 @@ fn cmdPasswd(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ
     var new_pw_buf: [256]u8 = undefined;
     const new_pw = try resolvePassword(io, stdout, env_map, .{}, &new_pw_buf, true);
 
-    _ = keystore.changePassword(io, name, old_pw, new_pw) catch |err| switch (err) {
-        keystore.KeystoreError.IdentityNotFound => {
+    _ = keymng.changePassword(io, name, old_pw, new_pw) catch |err| switch (err) {
+        keymng.KeystoreError.IdentityNotFound => {
             try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
             try stdout.flush();
             return;
@@ -285,11 +285,378 @@ fn cmdPasswd(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ
     try stdout.flush();
 }
 
+fn parseIpv4(text: []const u8) ![4]u8 {
+    var result: [4]u8 = undefined;
+    var it = std.mem.splitScalar(u8, text, '.');
+    var idx: usize = 0;
+    while (it.next()) |part| {
+        if (idx >= 4) return error.InvalidIpv4Address;
+        result[idx] = std.fmt.parseInt(u8, part, 10) catch return error.InvalidIpv4Address;
+        idx += 1;
+    }
+    if (idx != 4) return error.InvalidIpv4Address;
+    return result;
+}
+
+fn parseIpv6(text: []const u8) ![16]u8 {
+    var result: [16]u8 = [_]u8{0} ** 16;
+
+    const double_colon = std.mem.indexOf(u8, text, "::");
+
+    if (double_colon) |dc_pos| {
+        const left = text[0..dc_pos];
+        const right = text[dc_pos + 2 ..];
+
+        var left_groups: [8]u16 = undefined;
+        var left_count: usize = 0;
+        if (left.len > 0) {
+            var it = std.mem.splitScalar(u8, left, ':');
+            while (it.next()) |part| {
+                if (left_count >= 8) return error.InvalidIpv6Address;
+                left_groups[left_count] = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
+                left_count += 1;
+            }
+        }
+
+        var right_groups: [8]u16 = undefined;
+        var right_count: usize = 0;
+        if (right.len > 0) {
+            var it = std.mem.splitScalar(u8, right, ':');
+            while (it.next()) |part| {
+                if (right_count >= 8) return error.InvalidIpv6Address;
+                right_groups[right_count] = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
+                right_count += 1;
+            }
+        }
+
+        if (left_count + right_count > 8) return error.InvalidIpv6Address;
+
+        var groups: [8]u16 = [_]u16{0} ** 8;
+        @memcpy(groups[0..left_count], left_groups[0..left_count]);
+        @memcpy(groups[8 - right_count ..], right_groups[0..right_count]);
+
+        for (groups, 0..) |g, i| {
+            std.mem.writeInt(u16, result[i * 2 ..][0..2], g, .big);
+        }
+    } else {
+        var it = std.mem.splitScalar(u8, text, ':');
+        var idx: usize = 0;
+        while (it.next()) |part| {
+            if (idx >= 8) return error.InvalidIpv6Address;
+            const g = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
+            std.mem.writeInt(u16, result[idx * 2 ..][0..2], g, .big);
+            idx += 1;
+        }
+        if (idx != 8) return error.InvalidIpv6Address;
+    }
+
+    return result;
+}
+
+fn looksLikeIpv6(text: []const u8) bool {
+    return std.mem.indexOfScalar(u8, text, ':') != null;
+}
+
+fn readFileBytes(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+
+    const stat = try file.stat(io);
+    std.debug.print("[sipctl] readFileBytes: \"{s}\" ist {d} Byte groß\n", .{ path, stat.size });
+
+    const data = try allocator.alloc(u8, stat.size);
+    errdefer allocator.free(data);
+
+    _ = try file.readPositionalAll(io, data, 0);
+
+    return data;
+}
+
+const ResolvedMessage = struct {
+    bytes: []const u8,
+    owned: bool,
+
+    fn deinit(self: ResolvedMessage, allocator: std.mem.Allocator) void {
+        if (self.owned) {
+            allocator.free(self.bytes);
+        }
+    }
+};
+
+fn resolveMessage(io: std.Io, allocator: std.mem.Allocator, raw: []const u8) !ResolvedMessage {
+    if (raw.len > 0 and raw[0] == '@') {
+        const path = raw[1..];
+        std.debug.print("[sipctl] --message beginnt mit '@', lese Datei: \"{s}\"\n", .{path});
+        const data = try readFileBytes(io, allocator, path);
+        std.debug.print("[sipctl] Datei gelesen, {d} Bytes\n", .{data.len});
+        return ResolvedMessage{ .bytes = data, .owned = true };
+    }
+    std.debug.print("[sipctl] --message wird als roher Text behandelt ({d} Byte)\n", .{raw.len});
+    return ResolvedMessage{ .bytes = raw, .owned = false };
+}
+
+fn sendFramed(sock: sip.synet.Socket, data: []const u8) !void {
+    std.debug.print("[sipctl] sendFramed: schreibe {d} Byte (+4 Byte Längenpräfix)\n", .{data.len});
+
+    var len_buf: [4]u8 = undefined;
+    std.mem.writeInt(u32, &len_buf, @intCast(data.len), .big);
+    try sip.synet.sendAll(sock, &len_buf);
+    try sip.synet.sendAll(sock, data);
+    std.debug.print("[sipctl] sendFramed: fertig gesendet\n", .{});
+}
+
+fn recvFramed(allocator: std.mem.Allocator, sock: sip.synet.Socket) ![]u8 {
+    var len_buf: [4]u8 = undefined;
+    try sip.synet.recvExact(sock, &len_buf);
+    const len = std.mem.readInt(u32, &len_buf, .big);
+
+    const MAX_FRAME_SIZE: u32 = 256 * 1024 * 1024;
+    std.debug.print("[sipctl] recvFramed: Längenpräfix sagt {d} Byte\n", .{len});
+    if (len > MAX_FRAME_SIZE) {
+        std.debug.print("[sipctl] recvFramed: ABBRUCH, {d} Byte > Maximum {d}\n", .{ len, MAX_FRAME_SIZE });
+        return error.FrameTooLarge;
+    }
+
+    const buf = try allocator.alloc(u8, len);
+    errdefer allocator.free(buf);
+    try sip.synet.recvExact(sock, buf);
+    std.debug.print("[sipctl] recvFramed: {d} Byte vollständig empfangen\n", .{buf.len});
+    return buf;
+}
+
+fn performKeyExchange(io: std.Io, allocator: std.mem.Allocator, sock: sip.synet.Socket, local_keys: sip.identity.KeyPair, local_address: [16]u8, is_initiator: bool, peer_address: ?[16]u8) !sip.handshake.SessionKeys {
+    std.debug.print("[sipctl-keyexchange] Generiere ephemeres Schlüsselpaar...\n", .{});
+    var local_ephemeral = try sip.handshake.EphemeralKeyPair.generate(io);
+    defer local_ephemeral.deinit();
+
+    std.debug.print("[sipctl-keyexchange] Erstelle HandshakeMessage...\n", .{});
+    const local_msg = try sip.handshake.HandshakeMessage.create(local_keys, local_ephemeral);
+    var peer_msg: sip.handshake.HandshakeMessage = undefined;
+
+    if (is_initiator) {
+        std.debug.print("[sipctl-keyexchange] [initiator] Sende HandshakeMessage...\n", .{});
+        var local_msg_buf: [sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE + sip.handshake.SIGNATURE_SIZE]u8 = undefined;
+        @memcpy(local_msg_buf[0..sip.handshake.IDENTITY_PUBLIC_KEY_SIZE], &local_msg.identity_public_key);
+        @memcpy(
+            local_msg_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE .. sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE],
+            &local_msg.ephemeral_public_key,
+        );
+        @memcpy(
+            local_msg_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE ..],
+            &local_msg.signature,
+        );
+        try sendFramed(sock, &local_msg_buf);
+
+        std.debug.print("[sipctl-keyexchange] [initiator] Warte auf Peer-Message...\n", .{});
+        const peer_buf = try recvFramed(allocator, sock);
+        defer allocator.free(peer_buf);
+
+        const expected_msg_len = sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE + sip.handshake.SIGNATURE_SIZE;
+        if (peer_buf.len != expected_msg_len) {
+            std.debug.print("[ERROR] [sipctl-keyexchange] Ungültige Message-Länge: {d} (erwartet {d})\n", .{ peer_buf.len, expected_msg_len });
+            return error.InvalidPeerMessage;
+        }
+
+        @memcpy(&peer_msg.identity_public_key, peer_buf[0..sip.handshake.IDENTITY_PUBLIC_KEY_SIZE]);
+        @memcpy(
+            &peer_msg.ephemeral_public_key,
+            peer_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE .. sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE],
+        );
+        @memcpy(
+            &peer_msg.signature,
+            peer_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE ..],
+        );
+    } else {
+        std.debug.print("[sipctl-keyexchange] [responder] Warte auf Peer-Message...\n", .{});
+        const peer_buf = try recvFramed(allocator, sock);
+        defer allocator.free(peer_buf);
+
+        const expected_msg_len = sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE + sip.handshake.SIGNATURE_SIZE;
+        if (peer_buf.len != expected_msg_len) {
+            std.debug.print("[sipctl-keyexchange] Ungültige Message-Länge: {d} (erwartet {d})\n", .{ peer_buf.len, expected_msg_len });
+            return error.InvalidPeerMessage;
+        }
+
+        @memcpy(&peer_msg.identity_public_key, peer_buf[0..sip.handshake.IDENTITY_PUBLIC_KEY_SIZE]);
+        @memcpy(
+            &peer_msg.ephemeral_public_key,
+            peer_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE .. sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE],
+        );
+        @memcpy(
+            &peer_msg.signature,
+            peer_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE ..],
+        );
+
+        std.debug.print("[sipctl-keyexchange] [responder] Sende HandshakeMessage...\n", .{});
+        var local_msg_buf: [sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE + sip.handshake.SIGNATURE_SIZE]u8 = undefined;
+        @memcpy(local_msg_buf[0..sip.handshake.IDENTITY_PUBLIC_KEY_SIZE], &local_msg.identity_public_key);
+        @memcpy(
+            local_msg_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE .. sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE],
+            &local_msg.ephemeral_public_key,
+        );
+        @memcpy(
+            local_msg_buf[sip.handshake.IDENTITY_PUBLIC_KEY_SIZE + sip.handshake.PUBLIC_KEY_SIZE ..],
+            &local_msg.signature,
+        );
+        try sendFramed(sock, &local_msg_buf);
+    }
+
+    std.debug.print("[sipctl-keyexchange] Verifiziere Peer-Signatur...\n", .{});
+    try peer_msg.verify();
+
+    std.debug.print("[sipctl-keyexchange] Peer-Identität verifiziert. Leite Session-Keys ab...\n", .{});
+
+    const session = try sip.handshake.completeHandshake(
+        local_keys,
+        local_address,
+        local_ephemeral,
+        peer_msg,
+        peer_address,
+    );
+
+    var addr_buf: [64]u8 = undefined;
+    const addr_str = try sip.identity.formatSipAddress(&addr_buf, session.peer_address);
+    std.debug.print("[sipctl-keyexchange] Peer-Adresse: {s}\n", .{addr_str});
+    std.debug.print("[sipctl-keyexchange] Connection ID generiert: {d}\n", .{session.conn_id});
+
+    return session;
+}
+
+fn cmdSend(io: std.Io, allocator: std.mem.Allocator, stdout: *Io.Writer, env_map: *const std.process.Environ.Map, args: *ArgIter) !void {
+    const identity_name = args.next() orelse {
+        try stdout.writeAll("Verwendung: sipctl send <identity> <host> [--port PORT] <message>\n");
+        try stdout.flush();
+        return;
+    };
+
+    const host = args.next() orelse {
+        try stdout.writeAll("Verwendung: sipctl send <identity> <host> [--port PORT] <message>\n");
+        try stdout.flush();
+        return;
+    };
+
+    var port: u16 = 9443;
+    var message: ?[]const u8 = null;
+
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--port")) {
+            if (args.next()) |port_str| {
+                port = std.fmt.parseInt(u16, port_str, 10) catch {
+                    try stdout.writeAll("Fehler: Ungültiger Port\n");
+                    try stdout.flush();
+                    return;
+                };
+            }
+        } else {
+            message = arg;
+            break;
+        }
+    }
+
+    if (message == null) {
+        try stdout.writeAll("Fehler: Keine Nachricht angegeben\n");
+        try stdout.flush();
+        return;
+    }
+
+    // Lade Identität
+    var pw_buf: [256]u8 = undefined;
+    const password = try resolvePassword(io, stdout, env_map, .{}, &pw_buf, false);
+
+    const keys = keymng.loadIdentity(io, identity_name, password) catch |err| {
+        try stdout.print("Fehler beim Laden der Identität: {}\n", .{err});
+        try stdout.flush();
+        return;
+    };
+
+    var addr_buf: [64]u8 = undefined;
+    const local_addr = sip.identity.baseAddress(keys.public);
+    const addr_str = try sip.identity.formatSipAddress(&addr_buf, local_addr);
+    std.debug.print("[sipctl] Meine SIP-Adresse: {s}\n", .{addr_str});
+
+    const is_v6 = looksLikeIpv6(host);
+    std.debug.print("[sipctl] erkannte Adressfamilie: {s}\n", .{if (is_v6) "IPv6" else "IPv4"});
+
+    const sock = if (is_v6)
+        try sip.synet.createTcpSocketFamily(std.posix.AF.INET6)
+    else
+        try sip.synet.createTcpSocket();
+    defer sip.synet.close(sock);
+    std.debug.print("[sipctl] Socket erstellt (fd={d})\n", .{sock});
+
+    std.debug.print("[sipctl] verbinde zu {s}:{d}...\n", .{ host, port });
+
+    if (is_v6) {
+        const ip6 = try parseIpv6(host);
+        const addr6 = sip.synet.buildSockaddrIn6(ip6, port);
+        try sip.synet.connect6(sock, &addr6);
+    } else {
+        const ip4 = try parseIpv4(host);
+        std.debug.print("[sipctl] geparste IPv4-Bytes: {d}.{d}.{d}.{d}\n", .{ ip4[0], ip4[1], ip4[2], ip4[3] });
+        const addr4 = sip.synet.buildSockaddrIn(ip4, port);
+        try sip.synet.connect(sock, &addr4);
+    }
+    std.debug.print("[sipctl] TCP-Verbindung hergestellt\n", .{});
+
+    var disc_buf: [sip.header.OUTER_HEADER_SIZE]u8 = undefined;
+    var src: [16]u8 = undefined;
+    @memcpy(&src, &local_addr);
+    const disc_pkt = try sip.header.buildDiscoveryPacket(&disc_buf, src, [_]u8{0} ** 16);
+
+    try sip.synet.sendAll(sock, disc_pkt);
+    std.debug.print("[sipctl] Discovery gesendet\n", .{});
+
+    var reply_buf: [34]u8 = undefined;
+    try sip.synet.recvExact(sock, &reply_buf);
+
+    if (reply_buf[0] != sip.header.MAGIC) return error.InvalidMagic;
+
+    var peer_address: [16]u8 = undefined;
+    @memcpy(&peer_address, reply_buf[2..18]);
+    std.debug.print("[sipctl] Peer SIP-Adresse: {x}\n", .{peer_address});
+
+    std.debug.print("[sipctl] verbunden, starte Schlüsselaustausch...\n", .{});
+    var session = try performKeyExchange(io, allocator, sock, keys, local_addr, true, peer_address);
+    defer session.deinit();
+    std.debug.print("[sipctl] Schlüsselaustausch abgeschlossen.\n", .{});
+
+    const key = session.tx;
+
+    const resolved = try resolveMessage(io, allocator, message.?);
+    defer resolved.deinit(allocator);
+    const payload = resolved.bytes;
+
+    const mesh_src = local_addr;
+    const mesh_dst = peer_address;
+
+    std.debug.print("[sipctl] Teile Payload mit sip.fragmentation auf...\n", .{});
+
+    const packet_list = try sip.fragmentation.fragmentPayload(
+        io,
+        allocator,
+        mesh_src,
+        mesh_dst,
+        session.conn_id,
+        payload,
+        key,
+    );
+    defer packet_list.deinit();
+
+    std.debug.print("[sipctl] Payload in {d} Chunks aufgeteilt. Sende...\n", .{packet_list.items.len});
+
+    for (packet_list.items, 0..) |wire_packet, idx| {
+        std.debug.print("[sipctl] Sende Paket {d}/{d} (Größe: {d} Bytes)...\n", .{ idx + 1, packet_list.items.len, wire_packet.len });
+        try sip.synet.sendAll(sock, wire_packet);
+    }
+
+    std.debug.print("[sipctl] Transfer abgeschlossen. Alle Pakete gesendet.\n", .{});
+}
+
 fn printHelp(stdout: *Io.Writer) !void {
     try stdout.writeAll(
         \\sipctl - SIP Identitäts- und Adressverwaltung
         \\
-        \\Verwendung:
+        \\Identitätsverwaltung:
         \\  sipctl                      Adressen kompakt auflisten (wie 'ip a')
         \\  sipctl -v, --verbose        Adressen mit Details auflisten
         \\  sipctl list                 Alias für obiges
@@ -301,9 +668,14 @@ fn printHelp(stdout: *Io.Writer) !void {
         \\  sipctl passwd <name>        Passwort einer Identität ändern
         \\  sipctl rm <name>            Identität löschen
         \\
+        \\Nachrichtenverwaltung:
+        \\  sipctl send <identity> <host> [--port PORT] <message>
+        \\                              Nachricht an Server senden
+        \\                              Wenn <message> mit '@' beginnt, wird Dateiinhalt gesendet
+        \\
         \\  sipctl -h, --help           Diese Hilfe anzeigen
         \\
-        \\Passwort-Optionen (new/passwd):
+        \\Passwort-Optionen (new/passwd/send):
         \\  --password <pw>             Passwort direkt übergeben
         \\  SIP_PASSWORD Env-Variable    Passwort über Umgebungsvariable
         \\  (sonst interaktiver, versteckter Prompt)
@@ -314,6 +686,7 @@ fn printHelp(stdout: *Io.Writer) !void {
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
+    const gpa = init.gpa;
 
     var stdout_buf: [4096]u8 = undefined;
     var stdout_w = Io.File.stdout().writer(io, &stdout_buf);
@@ -376,6 +749,10 @@ pub fn main(init: std.process.Init) !void {
             else => return err,
         };
         try stdout.flush();
+    } else if (std.mem.eql(u8, cmd, "send")) {
+        cmdSend(io, gpa, stdout, init.environ_map, &args) catch |err| {
+            std.debug.print("Fehler beim Senden: {}\n", .{err});
+        };
     } else {
         try stdout.print("Unbekannter Befehl: '{s}'\n", .{cmd});
         try stdout.writeAll("Siehe 'sipctl --help' für Hilfe.\n");

@@ -1,6 +1,6 @@
 const std = @import("std");
 const sip = @import("sip");
-const keystore = @import("keystore.zig");
+const keymng = @import("keymng.zig");
 
 const DEFAULT_PORT: u16 = 9443;
 
@@ -330,19 +330,19 @@ fn loadOrCreateIdentity(
     allocator: std.mem.Allocator,
     identity_name: []const u8,
 ) !sip.identity.KeyPair {
-    if (keystore.identityExists(io, identity_name)) {
+    if (keymng.identityExists(io, identity_name)) {
         std.debug.print("[sip] Identität '{s}' existiert, laden...\n", .{identity_name});
         const password = try promptPassword(allocator, "[sip] Passwort");
         defer allocator.free(password);
 
-        return keystore.loadIdentity(io, identity_name, password) catch |err| {
+        return keymng.loadIdentity(io, identity_name, password) catch |err| {
             std.debug.print("[sip] Fehler beim Laden der Identität: {}\n", .{err});
             return err;
         };
     } else {
         std.debug.print("[sip] Identität '{s}' existiert nicht, erstelle neue...\n", .{identity_name});
 
-        if (!keystore.validName(identity_name)) {
+        if (!keymng.validName(identity_name)) {
             std.debug.print("[sip] Ungültiger Identitätsname (erlaubt: alphanumerisch, -, _, .)\n", .{});
             return error.InvalidIdentityName;
         }
@@ -358,8 +358,7 @@ fn loadOrCreateIdentity(
             return error.PasswordMismatch;
         }
 
-        // NEU
-        return keystore.createIdentity(io, identity_name, password) catch |err| {
+        return keymng.createIdentity(io, identity_name, password) catch |err| {
             std.debug.print("[sip] Fehler beim Erstellen der Identität: {}\n", .{err});
             return err;
         };

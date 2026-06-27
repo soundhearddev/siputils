@@ -2,7 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 const identity = @import("sip").identity;
 
-pub const KEY_ROOT = "/etc/sip";
+pub const KEY_ROOT = "/etc/sip/keys";
 
 pub const KeystoreError = error{
     IdentityNotFound,
@@ -47,8 +47,13 @@ pub fn validName(name: []const u8) bool {
 pub fn identityExists(io: std.Io, name: []const u8) bool {
     var dir_buf: [300]u8 = undefined;
     const dpath = identityDir(&dir_buf, name) catch return false;
-    const cwd = Io.Dir.cwd();
-    var d = cwd.openDir(io, dpath, .{}) catch return false;
+
+    var root_dir = Io.Dir.openDirAbsolute(io, "/", .{}) catch return false;
+    defer root_dir.close(io);
+
+    const relative_path = if (dpath.len > 0 and dpath[0] == '/') dpath[1..] else dpath;
+
+    var d = root_dir.openDir(io, relative_path, .{}) catch return false;
     d.close(io);
     return true;
 }
@@ -65,18 +70,22 @@ pub fn loadIdentity(io: std.Io, name: []const u8, password: []const u8) !identit
     const priv_path = try privatePath(&priv_path_buf, name);
     const pub_path = try publicPath(&pub_path_buf, name);
 
-    const cwd = Io.Dir.cwd();
+    var root_dir = try Io.Dir.openDirAbsolute(io, "/", .{});
+    defer root_dir.close(io);
+
+    const rel_priv = if (priv_path[0] == '/') priv_path[1..] else priv_path;
+    const rel_pub = if (pub_path[0] == '/') pub_path[1..] else pub_path;
 
     var raw: [identity.ENCRYPTED_PRIVATE_LEN]u8 = undefined;
     {
-        const f = cwd.openFile(io, priv_path, .{}) catch return KeystoreError.IdentityNotFound;
+        const f = root_dir.openFile(io, rel_priv, .{}) catch return KeystoreError.IdentityNotFound;
         defer f.close(io);
         _ = try f.readPositionalAll(io, &raw, 0);
     }
 
     var pub_bytes: [32]u8 = undefined;
     {
-        const f = cwd.openFile(io, pub_path, .{}) catch return KeystoreError.IdentityNotFound;
+        const f = root_dir.openFile(io, rel_pub, .{}) catch return KeystoreError.IdentityNotFound;
         defer f.close(io);
         _ = try f.readPositionalAll(io, &pub_bytes, 0);
     }
