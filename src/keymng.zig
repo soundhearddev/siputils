@@ -2,7 +2,10 @@ const std = @import("std");
 const Io = std.Io;
 const identity = @import("sip").identity;
 
-pub const KEY_ROOT = "/etc/sip/keys";
+pub const CONFIG_ROOT = "/etc/sip";
+pub const KEY_ROOT = "/keys";
+
+pub const ROOT = CONFIG_ROOT ++ KEY_ROOT;
 
 pub const KeystoreError = error{
     IdentityNotFound,
@@ -24,15 +27,15 @@ pub const IdentityEntry = struct {
 };
 
 pub fn identityDir(buf: []u8, name: []const u8) ![]const u8 {
-    return std.fmt.bufPrint(buf, "{s}/{s}", .{ KEY_ROOT, name });
+    return std.fmt.bufPrint(buf, "{s}/{s}", .{ ROOT, name });
 }
 
 pub fn privatePath(buf: []u8, name: []const u8) ![]const u8 {
-    return std.fmt.bufPrint(buf, "{s}/{s}/private.key", .{ KEY_ROOT, name });
+    return std.fmt.bufPrint(buf, "{s}/{s}/private.key", .{ ROOT, name });
 }
 
 pub fn publicPath(buf: []u8, name: []const u8) ![]const u8 {
-    return std.fmt.bufPrint(buf, "{s}/{s}/public.key", .{ KEY_ROOT, name });
+    return std.fmt.bufPrint(buf, "{s}/{s}/public.key", .{ ROOT, name });
 }
 
 pub fn validName(name: []const u8) bool {
@@ -129,28 +132,36 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
     const dir = try identityDir(&dir_buf, name);
 
     const cwd = Io.Dir.cwd();
-    cwd.createDirPath(io, KEY_ROOT) catch |err| switch (err) {
+    cwd.createDirPath(io, ROOT) catch |err| switch (err) {
         error.PathAlreadyExists => {},
+        error.AccessDenied => {
+            std.debug.print("Fehler: Kein Schreibzugriff auf '{s}'\n", .{ROOT});
+            return err;
+        },
         else => return err,
     };
     {
         var path_c_buf: [320]u8 = undefined;
-        const dir_c = try std.fmt.bufPrint(&path_c_buf, "{s}\x00", .{KEY_ROOT});
+        const dir_c = try std.fmt.bufPrint(&path_c_buf, "{s}\x00", .{ROOT});
 
-        const rc = std.os.linux.syscall2(.chmod, @intFromPtr(dir_c.ptr), 0o700);
+        const rc = std.os.linux.syscall2(.chmod, @intFromPtr(dir_c.ptr), 0o755);
 
         if (rc != 0) return KeystoreError.ChmodFailed;
     }
 
     cwd.createDirPath(io, dir) catch |err| switch (err) {
         error.PathAlreadyExists => return KeystoreError.IdentityAlreadyExists,
+        error.AccessDenied => {
+            std.debug.print("Fehler: Kein Schreibzugriff auf '{s}'\n", .{dir});
+            return err;
+        },
         else => return err,
     };
     {
         var path_c_buf: [320]u8 = undefined;
         const dir_c = try std.fmt.bufPrint(&path_c_buf, "{s}\x00", .{dir});
 
-        const rc = std.os.linux.syscall2(.chmod, @intFromPtr(dir_c.ptr), 0o700);
+        const rc = std.os.linux.syscall2(.chmod, @intFromPtr(dir_c.ptr), 0o755);
         if (rc != 0) return KeystoreError.ChmodFailed;
     }
 
@@ -173,7 +184,7 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
     {
         const f = try cwd.createFile(io, priv_path, .{});
         defer f.close(io);
-        const rc = std.os.linux.syscall2(.fchmod, @intCast(f.handle), 0o600);
+        const rc = std.os.linux.syscall2(.fchmod, @intCast(f.handle), 0o644);
         if (rc != 0) return KeystoreError.ChmodFailed;
         var buf: [256]u8 = undefined;
         var w = f.writer(io, &buf);
@@ -203,7 +214,7 @@ pub fn forEachIdentity(
     comptime callback: fn (ctx: Context, entry: IdentityEntry) anyerror!void,
 ) !void {
     const cwd = Io.Dir.cwd();
-    var dir = cwd.openDir(io, KEY_ROOT, .{ .iterate = true }) catch {
+    var dir = cwd.openDir(io, ROOT, .{ .iterate = true }) catch {
         return ListError.KeyRootMissing;
     };
     defer dir.close(io);

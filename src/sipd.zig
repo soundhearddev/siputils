@@ -6,7 +6,7 @@ const keymng = @import("keymng.zig");
 // Konstanten
 // ---------------------------------------------------------------------------
 
-const CONFIG_PATH: []const u8 = "/etc/sip/sipd.conf";
+const CONFIG_PATH: []const u8 = keymng.CONFIG_ROOT ++ "/sipd.conf";
 const DEFAULT_PORT: u16 = 9443;
 const DEFAULT_PIDFILE: []const u8 = "/run/sipd.pid";
 const DEFAULT_RUNTIME_DIR: []const u8 = "/run/sipd";
@@ -34,7 +34,7 @@ const DaemonConfig = struct {
 
 // ---------------------------------------------------------------------------
 //   # Kommentar
-//   identity_name = meinhost
+//   identity_name = identity
 //   host          = 0.0.0.0
 //   port          = 9443
 //   use_v6        = false
@@ -63,6 +63,14 @@ fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Daemo
 
     var lines = std.mem.splitScalar(u8, raw, '\n');
     var line_nr: usize = 0;
+
+    errdefer {
+        if (identity_name) |n| allocator.free(n);
+        if (host) |h| allocator.free(h);
+        if (output_path) |o| allocator.free(o);
+        allocator.free(pidfile);
+        allocator.free(runtime_dir);
+    }
 
     while (lines.next()) |line_raw| {
         line_nr += 1;
@@ -353,7 +361,7 @@ fn performKeyExchange(
     }.run;
 
     if (is_initiator) {
-        std.debug.print("[sipd-kex] [initiator] Sende Handshake...\n", .{});
+        verbosePrint(verbose, "[sipd-kex] [initiator] Sende Handshake...\n", .{});
         var out_buf: [MSG_LEN]u8 = undefined;
         serializeMsg(local_msg, &out_buf);
         try sendFramed(sock, &out_buf, verbose);
@@ -363,12 +371,12 @@ fn performKeyExchange(
         defer allocator.free(peer_buf);
         try deserializeMsg(peer_buf, &peer_msg);
     } else {
-        std.debug.print("[sipd-kex] [responder] Warte auf Peer...\n", .{});
+        verbosePrint(verbose, "[sipd-kex] [responder] Warte auf Peer...\n", .{});
         const peer_buf = try recvFramed(allocator, sock, verbose);
         defer allocator.free(peer_buf);
         try deserializeMsg(peer_buf, &peer_msg);
 
-        std.debug.print("[sipd-kex] [responder] Sende Handshake...\n", .{});
+        verbosePrint(verbose, "[sipd-kex] [responder] Sende Handshake...\n", .{});
         var out_buf: [MSG_LEN]u8 = undefined;
         serializeMsg(local_msg, &out_buf);
         try sendFramed(sock, &out_buf, verbose);
@@ -387,7 +395,7 @@ fn performKeyExchange(
 
     var addr_buf: [64]u8 = undefined;
     const addr_str = try sip.identity.formatSipAddress(&addr_buf, session.peer_address);
-    std.debug.print("[sipd-kex] Peer: {s}  ConnID: {d}\n", .{ addr_str, session.conn_id });
+    verbosePrint(verbose, "[sipd-kex] Peer: {s}  ConnID: {d}\n", .{ addr_str, session.conn_id });
 
     return session;
 }
@@ -432,13 +440,13 @@ fn handleConnection(
     var reply_buf: [34]u8 = undefined;
     const reply = try sip.header.buildDiscoveryPacket(&reply_buf, addr, disc_src);
     try sip.synet.sendAll(conn, reply);
-    std.debug.print("[sipd] Discovery-Reply gesendet\n", .{});
+    verbosePrint(config.verbose, "[sipd] Discovery-Reply gesendet\n", .{});
 
     // Schlüsselaustausch
     var session = try performKeyExchange(io, allocator, conn, keys, addr, false, null, config.verbose);
     defer session.deinit();
     const rx_key = session.rx;
-    std.debug.print("[sipd] Schlüsselaustausch abgeschlossen\n", .{});
+    verbosePrint(config.verbose, "[sipd] Schlüsselaustausch abgeschlossen\n", .{});
 
     // Payload empfangen
     var reassembler = sip.translation.Reassembler.init(io, allocator, "/tmp/sip");
@@ -493,7 +501,7 @@ fn handleConnection(
             verbosePrint(config.verbose, "[sipd] Chunk-Transfer komplett, {d} Chunks\n", .{chunk_paths.len});
 
             for (chunk_paths) |chunk_path| {
-                try streamFileAndDelete(io, allocator, stdout, chunk_path);
+                try streamFileAndDelete(io, allocator, stdout, chunk_path, config.verbose);
             }
         },
 
@@ -503,7 +511,7 @@ fn handleConnection(
     }
 }
 
-fn streamFileAndDelete(io: std.Io, allocator: std.mem.Allocator, dest: anytype, path: []const u8) !void {
+fn streamFileAndDelete(io: std.Io, allocator: std.mem.Allocator, dest: anytype, path: []const u8, verbose: bool) !void {
     var tmp_dir = try std.Io.Dir.openDirAbsolute(io, "/tmp", .{});
     defer tmp_dir.close(io);
 
@@ -513,7 +521,7 @@ fn streamFileAndDelete(io: std.Io, allocator: std.mem.Allocator, dest: anytype, 
     else
         path;
 
-    std.debug.print("[sipd-debug] Lese Datei {s}\n", .{relative_to_tmp});
+    verbosePrint(verbose, "[sipd-debug] Lese Datei {s}\n", .{relative_to_tmp});
 
     const data = try tmp_dir.readFileAlloc(io, relative_to_tmp, allocator, .unlimited);
     defer allocator.free(data);
@@ -588,7 +596,7 @@ fn runDaemon(
     }
 
     try sip.synet.listen(listener, 1);
-    std.debug.print("[sipd] lauscht auf Port {d}\n", .{config.port});
+    verbosePrint(config.verbose, "[sipd] lauscht auf Port {d}\n", .{config.port});
 
     while (!should_shutdown.load(.acquire)) {
         std.debug.print("[sipd] warte auf Verbindung...\n", .{});
@@ -607,15 +615,42 @@ fn runDaemon(
     std.debug.print("[sipd] heruntergefahren\n", .{});
 }
 
+const ArgIter = struct {
+    argv: []const [:0]const u8,
+    idx: *usize,
+
+    fn next(self: *ArgIter) ?[]const u8 {
+        if (self.idx.* >= self.argv.len) return null;
+        const a = self.argv[self.idx.*];
+        self.idx.* += 1;
+        return a;
+    }
+};
+
 // ---------------------------------------------------------------------------
 // Einstiegspunkt
 // ---------------------------------------------------------------------------
-
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
 
-    const config = loadConfig(io, gpa, CONFIG_PATH) catch |err| {
+    const argv = try init.minimal.args.toSlice(gpa);
+    defer gpa.free(argv);
+
+    var arg_idx: usize = 1;
+    var args = ArgIter{ .argv = argv, .idx = &arg_idx };
+
+    var config_path: []const u8 = CONFIG_PATH;
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--config")) {
+            config_path = args.next() orelse {
+                std.debug.print("[sipd] Fehler: -c erwartet einen Pfad\n", .{});
+                std.process.exit(1);
+            };
+        }
+    }
+
+    const config = loadConfig(io, gpa, config_path) catch |err| {
         std.debug.print("[sipd] Konfigurationsfehler ({any}), Abbruch.\n", .{err});
         std.process.exit(1);
     };
