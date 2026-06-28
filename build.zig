@@ -42,28 +42,28 @@ pub fn build(b: *std.Build) void {
     // server_test
     // ─────────────────────────────────────────────
 
-    const server_mod = b.createModule(.{
-        .root_source_file = b.path("src/svr_clt_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+    // const server_mod = b.createModule(.{
+    //     .root_source_file = b.path("src/svr_clt_test.zig"),
+    //     .target = target,
+    //     .optimize = optimize,
+    // });
 
-    server_mod.addImport("sip", sip_mod);
+    // server_mod.addImport("sip", sip_mod);
 
-    const server = b.addExecutable(.{
-        .name = "server_test",
-        .root_module = server_mod,
-    });
+    // const server = b.addExecutable(.{
+    //     .name = "server_test",
+    //     .root_module = server_mod,
+    // });
 
-    b.installArtifact(server);
+    // b.installArtifact(server);
 
-    const run_server = b.addRunArtifact(server);
-    run_server.step.dependOn(b.getInstallStep());
+    // const run_server = b.addRunArtifact(server);
+    // run_server.step.dependOn(b.getInstallStep());
 
-    if (b.args) |args| run_server.addArgs(args);
+    // if (b.args) |args| run_server.addArgs(args);
 
-    b.step("run-server", "Run server_test")
-        .dependOn(&run_server.step);
+    // b.step("run-server", "Run server_test")
+    //     .dependOn(&run_server.step);
 
     // ─────────────────────────────────────────────
     // header_test

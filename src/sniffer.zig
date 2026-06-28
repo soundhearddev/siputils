@@ -60,7 +60,6 @@ fn handleFrame(frame: []const u8) void {
     @memcpy(&mesh_src, app[2..18]);
     @memcpy(&mesh_dst, app[18..34]);
 
-    // IPv6 src formatieren
     var ip6_buf: [40]u8 = undefined;
     var ip6_pos: usize = 0;
     var i: usize = 0;
@@ -73,7 +72,6 @@ fn handleFrame(frame: []const u8) void {
         ip6_pos += s.len;
     }
 
-    // mesh addr formatieren
     var msrc_buf: [47]u8 = undefined;
     var msrc_pos: usize = 0;
     for (mesh_src, 0..) |b, j| {

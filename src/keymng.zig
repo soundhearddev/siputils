@@ -1,6 +1,8 @@
 const std = @import("std");
 const Io = std.Io;
 const identity = @import("sip").identity;
+const registry = @import("registry.zig");
+const fs = @import("filesystem.zig");
 
 pub const CONFIG_ROOT = "/etc/sip";
 pub const KEY_ROOT = "/keys";
@@ -50,15 +52,7 @@ pub fn validName(name: []const u8) bool {
 pub fn identityExists(io: std.Io, name: []const u8) bool {
     var dir_buf: [300]u8 = undefined;
     const dpath = identityDir(&dir_buf, name) catch return false;
-
-    var root_dir = Io.Dir.openDirAbsolute(io, "/", .{}) catch return false;
-    defer root_dir.close(io);
-
-    const relative_path = if (dpath.len > 0 and dpath[0] == '/') dpath[1..] else dpath;
-
-    var d = root_dir.openDir(io, relative_path, .{}) catch return false;
-    d.close(io);
-    return true;
+    return fs.dirExists(io, dpath);
 }
 
 pub fn createIdentity(io: std.Io, name: []const u8, password: []const u8) !identity.KeyPair {
@@ -73,25 +67,17 @@ pub fn loadIdentity(io: std.Io, name: []const u8, password: []const u8) !identit
     const priv_path = try privatePath(&priv_path_buf, name);
     const pub_path = try publicPath(&pub_path_buf, name);
 
-    var root_dir = try Io.Dir.openDirAbsolute(io, "/", .{});
+    var root_dir = try fs.openRoot(io);
     defer root_dir.close(io);
 
-    const rel_priv = if (priv_path[0] == '/') priv_path[1..] else priv_path;
-    const rel_pub = if (pub_path[0] == '/') pub_path[1..] else pub_path;
+    const rel_priv = fs.stripLeadingSlash(priv_path);
+    const rel_pub = fs.stripLeadingSlash(pub_path);
 
     var raw: [identity.ENCRYPTED_PRIVATE_LEN]u8 = undefined;
-    {
-        const f = root_dir.openFile(io, rel_priv, .{}) catch return KeystoreError.IdentityNotFound;
-        defer f.close(io);
-        _ = try f.readPositionalAll(io, &raw, 0);
-    }
+    fs.readFileExactRel(io, &root_dir, rel_priv, &raw) catch return KeystoreError.IdentityNotFound;
 
     var pub_bytes: [32]u8 = undefined;
-    {
-        const f = root_dir.openFile(io, rel_pub, .{}) catch return KeystoreError.IdentityNotFound;
-        defer f.close(io);
-        _ = try f.readPositionalAll(io, &pub_bytes, 0);
-    }
+    fs.readFileExactRel(io, &root_dir, rel_pub, &pub_bytes) catch return KeystoreError.IdentityNotFound;
 
     const secret = try identity.decryptPrivateKey(&raw, password);
     return identity.KeyPair{ .public = pub_bytes, .secret = secret };
@@ -100,11 +86,9 @@ pub fn loadIdentity(io: std.Io, name: []const u8, password: []const u8) !identit
 pub fn loadPublicOnly(io: std.Io, name: []const u8) ![32]u8 {
     var pub_path_buf: [300]u8 = undefined;
     const pub_path = try publicPath(&pub_path_buf, name);
-    const cwd = Io.Dir.cwd();
-    const f = cwd.openFile(io, pub_path, .{}) catch return KeystoreError.IdentityNotFound;
-    defer f.close(io);
+
     var pub_bytes: [32]u8 = undefined;
-    _ = try f.readPositionalAll(io, &pub_bytes, 0);
+    fs.readFileExact(io, pub_path, &pub_bytes) catch return KeystoreError.IdentityNotFound;
     return identity.parsePublicKey(&pub_bytes);
 }
 
@@ -112,8 +96,7 @@ pub fn deleteIdentity(io: std.Io, name: []const u8) !void {
     if (!identityExists(io, name)) return KeystoreError.IdentityNotFound;
     var dir_buf: [300]u8 = undefined;
     const dpath = try identityDir(&dir_buf, name);
-    const cwd = Io.Dir.cwd();
-    try cwd.deleteTree(io, dpath);
+    try fs.deleteTree(io, dpath);
 }
 
 pub fn changePassword(io: std.Io, name: []const u8, old_password: []const u8, new_password: []const u8) !identity.KeyPair {
@@ -121,8 +104,7 @@ pub fn changePassword(io: std.Io, name: []const u8, old_password: []const u8, ne
 
     var dir_buf: [300]u8 = undefined;
     const dpath = try identityDir(&dir_buf, name);
-    const cwd = Io.Dir.cwd();
-    try cwd.deleteTree(io, dpath);
+    try fs.deleteTree(io, dpath);
 
     return try storeIdentity(io, name, kp, new_password);
 }
@@ -131,8 +113,9 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
     var dir_buf: [300]u8 = undefined;
     const dir = try identityDir(&dir_buf, name);
 
-    const cwd = Io.Dir.cwd();
-    cwd.createDirPath(io, ROOT) catch |err| switch (err) {
+    const sip_gid = fs.lookupGroupGid(io, "sip") catch return KeystoreError.ChmodFailed;
+
+    fs.createDirPath(io, ROOT) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         error.AccessDenied => {
             std.debug.print("Fehler: Kein Schreibzugriff auf '{s}'\n", .{ROOT});
@@ -140,16 +123,10 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
         },
         else => return err,
     };
-    {
-        var path_c_buf: [320]u8 = undefined;
-        const dir_c = try std.fmt.bufPrint(&path_c_buf, "{s}\x00", .{ROOT});
+    fs.chmodPath(ROOT, 0o755) catch return KeystoreError.ChmodFailed;
+    fs.chownPath(ROOT, 0, sip_gid) catch return KeystoreError.ChmodFailed;
 
-        const rc = std.os.linux.syscall2(.chmod, @intFromPtr(dir_c.ptr), 0o755);
-
-        if (rc != 0) return KeystoreError.ChmodFailed;
-    }
-
-    cwd.createDirPath(io, dir) catch |err| switch (err) {
+    fs.createDirPath(io, dir) catch |err| switch (err) {
         error.PathAlreadyExists => return KeystoreError.IdentityAlreadyExists,
         error.AccessDenied => {
             std.debug.print("Fehler: Kein Schreibzugriff auf '{s}'\n", .{dir});
@@ -157,13 +134,8 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
         },
         else => return err,
     };
-    {
-        var path_c_buf: [320]u8 = undefined;
-        const dir_c = try std.fmt.bufPrint(&path_c_buf, "{s}\x00", .{dir});
-
-        const rc = std.os.linux.syscall2(.chmod, @intFromPtr(dir_c.ptr), 0o755);
-        if (rc != 0) return KeystoreError.ChmodFailed;
-    }
+    fs.chmodPath(dir, 0o755) catch return KeystoreError.ChmodFailed;
+    fs.chownPath(dir, 0, sip_gid) catch return KeystoreError.ChmodFailed;
 
     const rng_src: std.Random.IoSource = .{ .io = io };
     const rand = rng_src.interface();
@@ -181,26 +153,11 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
     const priv_path = try privatePath(&priv_path_buf, name);
     const pub_path = try publicPath(&pub_path_buf, name);
 
-    {
-        const f = try cwd.createFile(io, priv_path, .{});
-        defer f.close(io);
-        const rc = std.os.linux.syscall2(.fchmod, @intCast(f.handle), 0o644);
-        if (rc != 0) return KeystoreError.ChmodFailed;
-        var buf: [256]u8 = undefined;
-        var w = f.writer(io, &buf);
-        try w.interface.writeAll(&blob);
-        try w.flush();
-    }
-    {
-        const f = try cwd.createFile(io, pub_path, .{});
-        defer f.close(io);
-        const rc = std.os.linux.syscall2(.fchmod, @intCast(f.handle), 0o644);
-        if (rc != 0) return KeystoreError.ChmodFailed;
-        var buf: [64]u8 = undefined;
-        var w = f.writer(io, &buf);
-        try w.interface.writeAll(&kp.public);
-        try w.flush();
-    }
+    fs.writeNewFileOwned(io, priv_path, 0o644, 0, sip_gid, &blob) catch return KeystoreError.ChmodFailed;
+    fs.writeNewFileOwned(io, pub_path, 0o644, 0, sip_gid, &kp.public) catch return KeystoreError.ChmodFailed;
+
+    const addr = registry.parseIpv6("::1") orelse return error.InvalidIpv6;
+    try registry.register(io, name, registry.Entry.fromIpv6(addr));
 
     return kp;
 }
@@ -213,8 +170,7 @@ pub fn forEachIdentity(
     ctx: Context,
     comptime callback: fn (ctx: Context, entry: IdentityEntry) anyerror!void,
 ) !void {
-    const cwd = Io.Dir.cwd();
-    var dir = cwd.openDir(io, ROOT, .{ .iterate = true }) catch {
+    var dir = fs.openIterableDir(io, ROOT) catch {
         return ListError.KeyRootMissing;
     };
     defer dir.close(io);

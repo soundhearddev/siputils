@@ -606,7 +606,7 @@ fn runClient(io: std.Io, allocator: std.mem.Allocator, host: []const u8, port: u
     const keys = try loadOrCreateIdentity(io, allocator, identity_name);
     var addr_buf: [64]u8 = undefined;
     const local_addr = sip.identity.baseAddress(keys.public);
-    const addr_str = try sip.identity.formatSipAddress(&addr_buf, local_addr);
+    const addr_str = try (&addr_buf, "peer", session.peer_address);
     verbosePrint(verbose, "[client] Meine SIP-Adresse: {s}\n", .{addr_str});
 
     const is_v6 = looksLikeIpv6(host);

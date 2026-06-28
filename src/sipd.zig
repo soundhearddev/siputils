@@ -1,12 +1,12 @@
 const std = @import("std");
 const sip = @import("sip");
 const keymng = @import("keymng.zig");
-
+const fs = @import("filesystem.zig");
 // ---------------------------------------------------------------------------
 // Konstanten
 // ---------------------------------------------------------------------------
 
-const CONFIG_PATH: []const u8 = keymng.CONFIG_ROOT ++ "/sipd.conf";
+const CONFIG_PATH: []const u8 = fs.get_config_path();
 const DEFAULT_PORT: u16 = 9443;
 const DEFAULT_PIDFILE: []const u8 = "/run/sipd.pid";
 const DEFAULT_RUNTIME_DIR: []const u8 = "/run/sipd";
@@ -43,6 +43,10 @@ const DaemonConfig = struct {
 //   pidfile       = /run/sipd.pid
 //   runtime_dir   = /run/sipd
 // ---------------------------------------------------------------------------
+
+pub fn formatSipAddress(buf: []u8, name: []const u8, base: [16]u8) ![]const u8 {
+    return std.fmt.bufPrint(buf, "{s}{x}", .{ name, base });
+}
 
 fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !DaemonConfig {
     const cwd = std.Io.Dir.cwd();
@@ -185,10 +189,7 @@ fn writePidFile(io: std.Io, pidfile: []const u8) !void {
     var buf: [32]u8 = undefined;
     const pid_str = try std.fmt.bufPrint(&buf, "{d}", .{pid});
 
-    const cwd = std.Io.Dir.cwd();
-    var file = try cwd.createFile(io, pidfile, .{});
-    defer file.close(io);
-    try file.writeStreamingAll(io, pid_str);
+    try fs.writeNewFile(io, pidfile, 0o644, pid_str);
 
     std.debug.print("[sipd] PID {d} → {s}\n", .{ pid, pidfile });
 }
@@ -201,8 +202,7 @@ fn removePidFile(io: std.Io, pidfile: []const u8) void {
 }
 
 fn ensureRuntimeDir(io: std.Io, runtime_dir: []const u8) !void {
-    const cwd = std.Io.Dir.cwd();
-    cwd.createDirPath(io, runtime_dir) catch |err| switch (err) {
+    fs.createDirPath(io, runtime_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -394,7 +394,7 @@ fn performKeyExchange(
     );
 
     var addr_buf: [64]u8 = undefined;
-    const addr_str = try sip.identity.formatSipAddress(&addr_buf, session.peer_address);
+    const addr_str = try formatSipAddress(&addr_buf, "peer", session.peer_address);
     verbosePrint(verbose, "[sipd-kex] Peer: {s}  ConnID: {d}\n", .{ addr_str, session.conn_id });
 
     return session;
@@ -426,7 +426,6 @@ fn handleConnection(
 
     const addr = sip.identity.baseAddress(keys.public);
 
-    // Discovery
     var disc_buf: [34]u8 = undefined;
     try sip.synet.recvExact(conn, &disc_buf);
 
@@ -442,13 +441,11 @@ fn handleConnection(
     try sip.synet.sendAll(conn, reply);
     verbosePrint(config.verbose, "[sipd] Discovery-Reply gesendet\n", .{});
 
-    // Schlüsselaustausch
     var session = try performKeyExchange(io, allocator, conn, keys, addr, false, null, config.verbose);
     defer session.deinit();
     const rx_key = session.rx;
     verbosePrint(config.verbose, "[sipd] Schlüsselaustausch abgeschlossen\n", .{});
 
-    // Payload empfangen
     var reassembler = sip.translation.Reassembler.init(io, allocator, "/tmp/sip");
     defer reassembler.deinit();
 
@@ -549,7 +546,7 @@ fn runDaemon(
     if (config.verbose) {
         var addr_buf: [64]u8 = undefined;
         const addr = sip.identity.baseAddress(keys.public);
-        const addr_str = try sip.identity.formatSipAddress(&addr_buf, addr);
+        const addr_str = try formatSipAddress(&addr_buf, config.identity_name, addr);
         std.debug.print("[sipd] SIP-Adresse : {s}\n", .{addr_str});
         std.debug.print("[sipd] Modus       : {s}\n", .{if (config.use_v6) "IPv6" else "IPv4"});
         std.debug.print("[sipd] Host        : {s}\n", .{config.host orelse "ANY (0.0.0.0 / ::)"});

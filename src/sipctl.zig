@@ -2,6 +2,7 @@ const std = @import("std");
 const sip = @import("sip");
 const keymng = @import("keymng.zig");
 const Io = std.Io;
+const registry = @import("registry.zig");
 
 const CliError = error{
     MissingArgument,
@@ -103,7 +104,11 @@ const ListCtx = struct {
     idx: usize = 1,
 };
 
-fn printIdentityEntry(ctx: *ListCtx, entry: keymng.IdentityEntry) !void {
+pub fn formatSipAddress(buf: []u8, name: []const u8, base: [16]u8) ![]const u8 {
+    return std.fmt.bufPrint(buf, "{s}.{x}", .{ name, base });
+}
+
+fn printIdentityEntry(ctx: *ListCtx, entry: keymng.IdentityEntry, name: []const u8) !void {
     if (!entry.valid) {
         try ctx.stdout.print("{d}: {s}: <kein gültiger public key>\n", .{ ctx.idx, entry.name() });
         ctx.idx += 1;
@@ -112,7 +117,7 @@ fn printIdentityEntry(ctx: *ListCtx, entry: keymng.IdentityEntry) !void {
 
     const base = sip.identity.baseAddress(entry.public);
     var addr_buf: [80]u8 = undefined;
-    const addr = try sip.identity.formatSipAddress(&addr_buf, base);
+    const addr = try formatSipAddress(&addr_buf, name, base);
 
     if (ctx.verbose) {
         try ctx.stdout.print("{d}: {s}\n", .{ ctx.idx, entry.name() });
@@ -124,7 +129,7 @@ fn printIdentityEntry(ctx: *ListCtx, entry: keymng.IdentityEntry) !void {
         try ctx.stdout.print("    keydir     : {s}\n", .{dpath});
         try ctx.stdout.writeAll("\n");
     } else {
-        try ctx.stdout.print("{d}: {s}: {s}\n", .{ ctx.idx, entry.name(), addr });
+        try ctx.stdout.print("{d}: {s}: {x}\n", .{ ctx.idx, entry.name(), base });
     }
     ctx.idx += 1;
 }
@@ -134,7 +139,7 @@ fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
 
     keymng.forEachIdentity(io, *ListCtx, &ctx, struct {
         fn cb(c: *ListCtx, entry: keymng.IdentityEntry) !void {
-            try printIdentityEntry(c, entry);
+            try printIdentityEntry(c, entry, entry.name());
         }
     }.cb) catch |err| switch (err) {
         keymng.ListError.KeyRootMissing => {
@@ -180,7 +185,7 @@ fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Ma
 
     const base = sip.identity.baseAddress(kp.public);
     var addr_buf: [80]u8 = undefined;
-    const addr = try sip.identity.formatSipAddress(&addr_buf, base);
+    const addr = try formatSipAddress(&addr_buf, name, base);
 
     try stdout.print("[+] Identität '{s}' erstellt\n", .{name});
     try stdout.print("    sip-address: {s}\n", .{addr});
@@ -201,7 +206,7 @@ fn cmdShow(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     };
     const base = sip.identity.baseAddress(pub_bytes);
     var addr_buf: [80]u8 = undefined;
-    const addr = try sip.identity.formatSipAddress(&addr_buf, base);
+    const addr = try formatSipAddress(&addr_buf, name, base);
 
     var dir_buf: [300]u8 = undefined;
     const dpath = try keymng.identityDir(&dir_buf, name);
@@ -246,7 +251,7 @@ fn cmdExport(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
     };
     const base = sip.identity.baseAddress(pub_bytes);
     var addr_buf: [80]u8 = undefined;
-    const addr = try sip.identity.formatSipAddress(&addr_buf, base);
+    const addr = try formatSipAddress(&addr_buf, name, base);
     try stdout.print("{s} {x}\n", .{ addr, pub_bytes });
     try stdout.flush();
 }
@@ -374,10 +379,6 @@ fn parseIpv6(text: []const u8) ![16]u8 {
     }
 
     return result;
-}
-
-fn looksLikeIpv6(text: []const u8) bool {
-    return std.mem.indexOfScalar(u8, text, ':') != null;
 }
 
 fn readFileBytes(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
@@ -538,7 +539,7 @@ fn performKeyExchange(io: std.Io, allocator: std.mem.Allocator, sock: sip.synet.
     );
 
     var addr_buf: [64]u8 = undefined;
-    const addr_str = try sip.identity.formatSipAddress(&addr_buf, session.peer_address);
+    const addr_str = try formatSipAddress(&addr_buf, "sip1", session.peer_address);
     std.debug.print("[sipctl] Peer-Adresse: {s}\n", .{addr_str});
     std.debug.print("[sipctl] Connection ID generiert: {d}\n", .{session.conn_id});
 
@@ -593,11 +594,26 @@ fn cmdSend(io: std.Io, allocator: std.mem.Allocator, stdout: *Io.Writer, env_map
 
     var addr_buf: [64]u8 = undefined;
     const local_addr = sip.identity.baseAddress(keys.public);
-    const addr_str = try sip.identity.formatSipAddress(&addr_buf, local_addr);
+    const addr_str = try formatSipAddress(&addr_buf, identity_name, local_addr);
     verbosePrint(config.verbose, "[sipctl] Meine SIP-Adresse: {s}\n", .{addr_str});
 
-    const is_v6 = looksLikeIpv6(host);
-    verbosePrint(config.verbose, "[sipctl] erkannte Adressfamilie: {s}\n", .{if (is_v6) "IPv6" else "IPv4"});
+    const resolved_host = registry.resolve(io, allocator, host) catch |err| switch (err) {
+        registry.RegistryError.NotFound => {
+            try stdout.print("Fehler: Host/Name '{s}' nicht gefunden.\n", .{host});
+            try stdout.flush();
+            return;
+        },
+        registry.RegistryError.Ambiguous => {
+            try stdout.print("Fehler: Name '{s}' ist mehrdeutig (mehrere Treffer).\n", .{host});
+            try stdout.flush();
+            return;
+        },
+        else => return err,
+    };
+
+    verbosePrint(config.verbose, "[sipctl] aufgelöst über: {s}\n", .{@tagName(resolved_host.source)});
+
+    const is_v6 = resolved_host.entry.kind == .ipv6;
 
     const sock = if (is_v6)
         try sip.synet.createTcpSocketFamily(std.posix.AF.INET6)
@@ -608,15 +624,22 @@ fn cmdSend(io: std.Io, allocator: std.mem.Allocator, stdout: *Io.Writer, env_map
 
     std.debug.print("[sipctl] verbinde zu {s}:{d}...\n", .{ host, port });
 
-    if (is_v6) {
-        const ip6 = try parseIpv6(host);
-        const addr6 = sip.synet.buildSockaddrIn6(ip6, port);
-        try sip.synet.connect6(sock, &addr6);
-    } else {
-        const ip4 = try parseIpv4(host);
-        verbosePrint(config.verbose, "[sipctl] geparste IPv4-Bytes: {d}.{d}.{d}.{d}\n", .{ ip4[0], ip4[1], ip4[2], ip4[3] });
-        const addr4 = sip.synet.buildSockaddrIn(ip4, port);
-        try sip.synet.connect(sock, &addr4);
+    switch (resolved_host.entry.kind) {
+        .ipv6 => {
+            const addr6 = sip.synet.buildSockaddrIn6(resolved_host.entry.ipv6, port);
+            try sip.synet.connect6(sock, &addr6);
+        },
+        .ipv4 => {
+            const ip4 = resolved_host.entry.ipv4;
+            verbosePrint(config.verbose, "[sipctl] aufgelöste IPv4-Bytes: {d}.{d}.{d}.{d}\n", .{ ip4[0], ip4[1], ip4[2], ip4[3] });
+            const addr4 = sip.synet.buildSockaddrIn(ip4, port);
+            try sip.synet.connect(sock, &addr4);
+        },
+        .mesh => {
+            try stdout.writeAll("Fehler: Mesh-Adressen werden für 'send' noch nicht unterstützt.\n");
+            try stdout.flush();
+            return;
+        },
     }
     std.debug.print("[sipctl] TCP-Verbindung hergestellt\n", .{});
 
@@ -636,6 +659,20 @@ fn cmdSend(io: std.Io, allocator: std.mem.Allocator, stdout: *Io.Writer, env_map
     var peer_address: [16]u8 = undefined;
     @memcpy(&peer_address, reply_buf[2..18]);
     std.debug.print("[sipctl] Peer SIP-Adresse: {x}\n", .{peer_address});
+
+    if (resolved_host.source == .registry or resolved_host.source == .registry_partial) {
+        var mesh_buf: [registry.MESH_ADDR_SIZE]u8 = [_]u8{0} ** registry.MESH_ADDR_SIZE;
+        @memcpy(mesh_buf[0..16], &peer_address);
+
+        const lookup_name = if (resolved_host.source == .registry_partial)
+            resolved_host.matchedName()
+        else
+            host;
+
+        registry.updateMeshAddress(io, lookup_name, mesh_buf) catch |err| {
+            verbosePrint(config.verbose, "[sipctl] Mesh-Adresse für '{s}' konnte nicht aktualisiert werden: {any}\n", .{ lookup_name, err });
+        };
+    }
 
     verbosePrint(config.verbose, "[sipctl] verbunden, starte Schlüsselaustausch...\n", .{});
     var session = try performKeyExchange(io, allocator, sock, keys, local_addr, true, peer_address);
