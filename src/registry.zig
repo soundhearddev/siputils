@@ -394,32 +394,59 @@ pub fn parseIpv4(text: []const u8) ?[4]u8 {
     return result;
 }
 
-pub fn parseIpv6(text: []const u8) ?[16]u8 {
-    if (text.len == 0) return null;
-    const dci = std.mem.indexOf(u8, text, "::");
-    if (dci != null and std.mem.indexOf(u8, text[dci.? + 2 ..], "::") != null) return null;
-    var groups: [8]u16 = [_]u16{0} ** 8;
-    var left_count: usize = 0;
-    if (dci) |d| {
-        const left = text[0..d];
-        const right = text[d + 2 ..];
-        if (left.len > 0) left_count = parseGroups(left, &groups) orelse return null;
+fn parseIpv6(text: []const u8) ![16]u8 {
+    var result: [16]u8 = [_]u8{0} ** 16;
+
+    const double_colon = std.mem.indexOf(u8, text, "::");
+
+    if (double_colon) |dc_pos| {
+        const left = text[0..dc_pos];
+        const right = text[dc_pos + 2 ..];
+
+        var left_groups: [8]u16 = undefined;
+        var left_count: usize = 0;
+        if (left.len > 0) {
+            var it = std.mem.splitScalar(u8, left, ':');
+            while (it.next()) |part| {
+                if (left_count >= 8) return error.InvalidIpv6Address;
+                left_groups[left_count] = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
+                left_count += 1;
+            }
+        }
+
+        var right_groups: [8]u16 = undefined;
+        var right_count: usize = 0;
         if (right.len > 0) {
-            var rg: [8]u16 = undefined;
-            const rc = parseGroups(right, &rg) orelse return null;
-            if (left_count + rc > 8) return null;
-            for (0..rc) |i| groups[8 - rc + i] = rg[i];
+            var it = std.mem.splitScalar(u8, right, ':');
+            while (it.next()) |part| {
+                if (right_count >= 8) return error.InvalidIpv6Address;
+                right_groups[right_count] = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
+                right_count += 1;
+            }
+        }
+
+        if (left_count + right_count > 8) return error.InvalidIpv6Address;
+
+        var groups: [8]u16 = [_]u16{0} ** 8;
+        @memcpy(groups[0..left_count], left_groups[0..left_count]);
+        @memcpy(groups[8 - right_count ..], right_groups[0..right_count]);
+
+        for (groups, 0..) |g, i| {
+            std.mem.writeInt(u16, result[i * 2 ..][0..2], g, .big);
         }
     } else {
-        left_count = parseGroups(text, &groups) orelse return null;
-        if (left_count != 8) return null;
+        var it = std.mem.splitScalar(u8, text, ':');
+        var idx: usize = 0;
+        while (it.next()) |part| {
+            if (idx >= 8) return error.InvalidIpv6Address;
+            const g = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
+            std.mem.writeInt(u16, result[idx * 2 ..][0..2], g, .big);
+            idx += 1;
+        }
+        if (idx != 8) return error.InvalidIpv6Address;
     }
-    var out: [16]u8 = undefined;
-    for (groups, 0..) |g, i| {
-        out[i * 2] = @intCast(g >> 8);
-        out[i * 2 + 1] = @intCast(g & 0xFF);
-    }
-    return out;
+
+    return result;
 }
 
 pub fn parseMeshAddr(text: []const u8) ?[MESH_ADDR_SIZE]u8 {

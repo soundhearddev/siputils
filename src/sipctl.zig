@@ -313,74 +313,6 @@ fn cmdPasswd(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ
     try stdout.flush();
 }
 
-fn parseIpv4(text: []const u8) ![4]u8 {
-    var result: [4]u8 = undefined;
-    var it = std.mem.splitScalar(u8, text, '.');
-    var idx: usize = 0;
-    while (it.next()) |part| {
-        if (idx >= 4) return error.InvalidIpv4Address;
-        result[idx] = std.fmt.parseInt(u8, part, 10) catch return error.InvalidIpv4Address;
-        idx += 1;
-    }
-    if (idx != 4) return error.InvalidIpv4Address;
-    return result;
-}
-
-fn parseIpv6(text: []const u8) ![16]u8 {
-    var result: [16]u8 = [_]u8{0} ** 16;
-
-    const double_colon = std.mem.indexOf(u8, text, "::");
-
-    if (double_colon) |dc_pos| {
-        const left = text[0..dc_pos];
-        const right = text[dc_pos + 2 ..];
-
-        var left_groups: [8]u16 = undefined;
-        var left_count: usize = 0;
-        if (left.len > 0) {
-            var it = std.mem.splitScalar(u8, left, ':');
-            while (it.next()) |part| {
-                if (left_count >= 8) return error.InvalidIpv6Address;
-                left_groups[left_count] = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
-                left_count += 1;
-            }
-        }
-
-        var right_groups: [8]u16 = undefined;
-        var right_count: usize = 0;
-        if (right.len > 0) {
-            var it = std.mem.splitScalar(u8, right, ':');
-            while (it.next()) |part| {
-                if (right_count >= 8) return error.InvalidIpv6Address;
-                right_groups[right_count] = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
-                right_count += 1;
-            }
-        }
-
-        if (left_count + right_count > 8) return error.InvalidIpv6Address;
-
-        var groups: [8]u16 = [_]u16{0} ** 8;
-        @memcpy(groups[0..left_count], left_groups[0..left_count]);
-        @memcpy(groups[8 - right_count ..], right_groups[0..right_count]);
-
-        for (groups, 0..) |g, i| {
-            std.mem.writeInt(u16, result[i * 2 ..][0..2], g, .big);
-        }
-    } else {
-        var it = std.mem.splitScalar(u8, text, ':');
-        var idx: usize = 0;
-        while (it.next()) |part| {
-            if (idx >= 8) return error.InvalidIpv6Address;
-            const g = std.fmt.parseInt(u16, part, 16) catch return error.InvalidIpv6Address;
-            std.mem.writeInt(u16, result[idx * 2 ..][0..2], g, .big);
-            idx += 1;
-        }
-        if (idx != 8) return error.InvalidIpv6Address;
-    }
-
-    return result;
-}
-
 fn readFileBytes(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{});
     defer file.close(io);
@@ -565,7 +497,7 @@ fn cmdSend(io: std.Io, allocator: std.mem.Allocator, stdout: *Io.Writer, env_map
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--port")) {
             if (args.next()) |port_str| {
-                port = std.fmt.parseInt(u16, port_str, 10) catch {
+                port = std.fmt.snt(u16, port_str, 10) catch {
                     try stdout.writeAll("Fehler: Ungültiger Port\n");
                     try stdout.flush();
                     return;
