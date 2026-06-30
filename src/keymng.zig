@@ -156,7 +156,7 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
     fs.writeNewFileOwned(io, priv_path, 0o644, 0, sip_gid, &blob) catch return KeystoreError.ChmodFailed;
     fs.writeNewFileOwned(io, pub_path, 0o644, 0, sip_gid, &kp.public) catch return KeystoreError.ChmodFailed;
 
-    const addr = registry.parseIpv6("::1") orelse return error.InvalidIpv6;
+    const addr = try registry.parseIpv6("::1");
     try registry.register(io, name, registry.Entry.fromIpv6(addr));
 
     return kp;

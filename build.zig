@@ -172,6 +172,17 @@ pub fn build(b: *std.Build) void {
         .dependOn(&run_sipd.step);
 
     // ─────────────────────────────────────────────
+    // cmdhandler
+    // ─────────────────────────────────────────────
+    const cmd_mod = b.createModule(.{
+        .root_source_file = b.path("src/cmdhandler.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    cmd_mod.addImport("sip", sip_mod);
+
+    // ─────────────────────────────────────────────
     // sniffer
     // ─────────────────────────────────────────────
 

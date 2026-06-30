@@ -314,7 +314,7 @@ pub fn resolve(io: Io, allocator: std.mem.Allocator, name: []const u8) !ResolveR
     _ = allocator;
     if (name.len == 0) return RegistryError.NotFound;
 
-    if (parseIpv6(name)) |ipv6| return .{ .source = .direct_ipv6, .entry = Entry.fromIpv6(ipv6) };
+    if (parseIpv6(name) catch null) |ipv6| return .{ .source = .direct_ipv6, .entry = Entry.fromIpv6(ipv6) };
     if (parseIpv4(name)) |ipv4| return .{ .source = .direct_ipv4, .entry = Entry.fromIpv4(ipv4) };
 
     const f = openReadOnly(io) catch |err| switch (err) {
@@ -394,7 +394,7 @@ pub fn parseIpv4(text: []const u8) ?[4]u8 {
     return result;
 }
 
-fn parseIpv6(text: []const u8) ![16]u8 {
+pub fn parseIpv6(text: []const u8) ![16]u8 {
     var result: [16]u8 = [_]u8{0} ** 16;
 
     const double_colon = std.mem.indexOf(u8, text, "::");

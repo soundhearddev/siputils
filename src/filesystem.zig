@@ -127,6 +127,20 @@ pub fn readFileExactRel(io: std.Io, root_dir: *Io.Dir, rel_path: []const u8, buf
     _ = try f.readPositionalAll(io, buf, 0);
 }
 
+pub fn readFileBytes(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+
+    const stat = try file.stat(io);
+
+    const data = try allocator.alloc(u8, stat.size);
+    errdefer allocator.free(data);
+
+    _ = try file.readPositionalAll(io, data, 0);
+
+    return data;
+}
+
 pub fn writeNewFile(io: std.Io, abs_path: []const u8, mode: u32, content: []const u8) !void {
     const cwd = Io.Dir.cwd();
     const f = try cwd.createFile(io, abs_path, .{});
