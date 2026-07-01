@@ -26,7 +26,7 @@ fn buildAddress(gpa: std.mem.Allocator, io: std.Io, count: usize, prefix: []cons
                 std.debug.print("[✓] {s} (Permanent)\n", .{new_addr});
             }
         } else {
-            std.debug.print("[✗] Fehler bei {s}\n", .{new_addr});
+            std.debug.print("[✗] Error at {s}\n", .{new_addr});
             gpa.free(new_addr);
         }
     }
@@ -41,12 +41,12 @@ pub fn main(init: std.process.Init) !void {
 
     var interface: []u8 = undefined;
     if (DEBUG) {
-        std.debug.print("[MODUS] DEBUG-Modus aktiv. Nutze Dummy-Interface.\n", .{});
+        std.debug.print("[MODE] DEBUG mode active. Using dummy interface.\n", .{});
         interface = try utils.ensureDummyIface(gpa, io, "ipwrap0");
     } else {
-        std.debug.print("[MODUS] LIVE-Modus aktiv. Ermittle Standard-Interface...\n", .{});
+        std.debug.print("[MODE] LIVE mode active. Determining default interface...\n", .{});
         interface = try utils.getDefaultIface(gpa, io);
-        std.debug.print("[i] Standard-Interface gefunden: {s}\n", .{interface});
+        std.debug.print("[i] Default interface found: {s}\n", .{interface});
     }
     defer gpa.free(interface);
 
@@ -56,7 +56,7 @@ pub fn main(init: std.process.Init) !void {
     } else |_| {
         if (DEBUG) {
             prefix = try gpa.dupe(u8, "2001:db8:1234:5678:");
-            std.debug.print("[i] Dummy hat kein Präfix. Verwende Test-Präfix: {s}\n", .{prefix});
+            std.debug.print("[i] Dummy has no prefix. Using test prefix: {s}\n", .{prefix});
         } else {
             std.process.exit(1);
         }
@@ -70,7 +70,7 @@ pub fn main(init: std.process.Init) !void {
         already_assigned.deinit();
     }
 
-    std.debug.print("\nStarte Erstellung von {d} Adressen auf '{s}'...\n", .{ ANZAHL_IPS, interface });
+    std.debug.print("\nStarting generation of {d} addresses on '{s}'...\n", .{ ANZAHL_IPS, interface });
 
     var created = try buildAddress(gpa, io, ANZAHL_IPS, prefix, &already_assigned, interface, LEBENSDAUER_SEKUNDEN, init);
     defer created.deinit(gpa);
