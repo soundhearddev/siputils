@@ -156,7 +156,9 @@ pub fn main(init: std.process.Init) !void {
     defer gpa.free(wire);
 
     try sip.synet.sendAll(sock, wire);
-    std.debug.print("Action '{s}' gesendet, warte auf Antwort...\n", .{argv[4]});
+    
+    std.debug.print("Action '{s}' gesendet, warte auf Antwort...\n", .{pos_buf[2]});
+
 
     const inbound = try sip.translation.readInboundPacket(sock, gpa, session.rx);
     defer sip.translation.freeInboundPacket(gpa, inbound);
