@@ -4,6 +4,8 @@ const identity = @import("sip").identity;
 const registry = @import("registry.zig");
 const fs = @import("filesystem.zig");
 
+pub const DEFAULT_LINK_NAME = "default";
+
 pub const CONFIG_ROOT = "/etc/sip";
 pub const KEY_ROOT = "/keys";
 
@@ -193,4 +195,23 @@ pub fn forEachIdentity(
 
         try callback(ctx, ie);
     }
+}
+
+fn defaultLinkPath(buf: []u8) ![]const u8 {
+    return std.fmt.bufPrint(buf, "{s}/{s}", .{ ROOT, DEFAULT_LINK_NAME });
+}
+
+pub fn setDefaultIdentity(name: []const u8) !void {
+    var link_path_buf: [300]u8 = undefined;
+    const link_path = try defaultLinkPath(&link_path_buf);
+    try fs.replaceSymlink(name, link_path);
+}
+
+pub fn readDefaultIdentity(buf: []u8) ![]const u8 {
+    var link_path_buf: [300]u8 = undefined;
+    const link_path = try defaultLinkPath(&link_path_buf);
+    return fs.readSymlink(link_path, buf) catch |err| switch (err) {
+        error.ReadLinkFailed => return KeystoreError.IdentityNotFound,
+        else => return err,
+    };
 }

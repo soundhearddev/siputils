@@ -5,12 +5,12 @@ const keymng = @import("keymng.zig");
 
 const Io = std.Io;
 
-// TODO: Passwort aus Env-Variable oder Prompt lesen (wie in sipd.zig)
-fn loadServerIdentity(io: std.Io, gpa: std.mem.Allocator) !sip.identity.KeyPair {
-    // TODO: Identity-Name als CLI-Argument statt hardcoded "actiond"
-    const password = try promptPassword(gpa, "[actiond] Passwort");
+fn loadServerIdentity(io: std.Io, gpa: std.mem.Allocator, identity_name: []const u8) !sip.identity.KeyPair {
+    const prompt_msg = try std.fmt.allocPrint(gpa, "[{s}] Passwort", .{identity_name});
+    defer gpa.free(prompt_msg);
+    const password = try promptPassword(gpa, prompt_msg);
     defer gpa.free(password);
-    return keymng.loadIdentity(io, "actiond", password);
+    return keymng.loadIdentity(io, identity_name, password);
 }
 
 fn promptPassword(allocator: std.mem.Allocator, prompt_text: []const u8) ![]u8 {
@@ -190,21 +190,42 @@ fn handleConnection(
     };
 }
 
+fn getIdentityPassword(gpa: std.mem.Allocator, identity_name: []const u8) ![]u8 {
+    var env_buf: [64]u8 = undefined;
+    const env_name = std.fmt.bufPrint(&env_buf, "ACTIOND_PASSWORD_{s}", .{identity_name}) catch identity_name;
+
+    if (std.process.getEnvVarOwned(gpa, env_name)) |val| {
+        return val;
+    } else |_| {}
+
+    const prompt_msg = try std.fmt.allocPrint(gpa, "[{s}] Passwort", .{identity_name});
+    defer gpa.free(prompt_msg);
+    return promptPassword(gpa, prompt_msg);
+}
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
 
-    const server_keys = try loadServerIdentity(io, gpa);
+    const argv = try init.minimal.args.toSlice(init.arena.allocator());
+
+    var identity_name: []const u8 = "default";
+    {
+        var i: usize = 1;
+        while (i < argv.len) : (i += 1) {
+            if (std.mem.eql(u8, argv[i], "--identity") and i + 1 < argv.len) {
+                i += 1;
+                identity_name = argv[i];
+            }
+        }
+    }
+
+    const server_keys = try loadServerIdentity(io, gpa, identity_name);
     const server_addr = sip.identity.baseAddress(server_keys.public);
 
     var addr_buf: [80]u8 = undefined;
-    const addr_str = try sip.identity.formatSipAddress(&addr_buf, "actiond", server_addr);
+    const addr_str = try sip.identity.formatSipAddress(&addr_buf, identity_name, server_addr);
     std.debug.print("actiond starting, address={s}\n", .{addr_str});
-
-    // TODO: known_clients aus registry.zig laden statt per --trust Argument.
-    // registry.resolve(io, gpa, hex_or_name) gibt den Pubkey zurück.
-    // Solange registry nicht angebunden ist, bleibt --trust als Workaround.
-    const argv = try init.minimal.args.toSlice(init.arena.allocator());
     var known_buf: [8]actions.KnownClient = undefined;
     var known_count: usize = 0;
 

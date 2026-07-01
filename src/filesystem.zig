@@ -26,6 +26,12 @@ pub const FsError = error{
     InvalidPath,
 };
 
+pub const SymlinkError = error{
+    SymlinkFailed,
+    ReadLinkFailed,
+    BufferTooSmall,
+};
+
 pub fn stripLeadingSlash(path: []const u8) []const u8 {
     return if (path.len > 0 and path[0] == '/') path[1..] else path;
 }
@@ -189,4 +195,36 @@ pub fn forEachEntry(
     while (try it.next(io)) |entry| {
         try callback(ctx, entry);
     }
+}
+
+pub fn createSymlink(target: []const u8, link_path: []const u8) !void {
+    var target_c_buf: [320]u8 = undefined;
+    const target_c = try std.fmt.bufPrint(&target_c_buf, "{s}\x00", .{target});
+
+    var link_c_buf: [320]u8 = undefined;
+    const link_c = try std.fmt.bufPrint(&link_c_buf, "{s}\x00", .{link_path});
+
+    const rc = std.os.linux.syscall2(.symlink, @intFromPtr(target_c.ptr), @intFromPtr(link_c.ptr));
+    if (rc != 0) return SymlinkError.SymlinkFailed;
+}
+
+pub fn replaceSymlink(target: []const u8, link_path: []const u8) !void {
+    var link_c_buf: [320]u8 = undefined;
+    const link_c = try std.fmt.bufPrint(&link_c_buf, "{s}\x00", .{link_path});
+
+    _ = std.os.linux.syscall1(.unlink, @intFromPtr(link_c.ptr));
+
+    try createSymlink(target, link_path);
+}
+
+pub fn readSymlink(link_path: []const u8, buf: []u8) ![]const u8 {
+    var link_c_buf: [320]u8 = undefined;
+    const link_c = try std.fmt.bufPrint(&link_c_buf, "{s}\x00", .{link_path});
+
+    const rc = std.os.linux.syscall3(.readlink, @intFromPtr(link_c.ptr), @intFromPtr(buf.ptr), buf.len);
+    if (rc < 0) return SymlinkError.ReadLinkFailed;
+
+    const len: usize = @intCast(rc);
+    if (len > buf.len) return SymlinkError.BufferTooSmall;
+    return buf[0..len];
 }

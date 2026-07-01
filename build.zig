@@ -172,6 +172,32 @@ pub fn build(b: *std.Build) void {
         .dependOn(&run_sipd.step);
 
     // ─────────────────────────────────────────────
+    // setdefault
+    // ─────────────────────────────────────────────
+    const setdefault_mod = b.createModule(.{
+        .root_source_file = b.path("src/setdefault.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    setdefault_mod.addImport("sip", sip_mod);
+
+    const setdefault = b.addExecutable(.{
+        .name = "set-default",
+        .root_module = setdefault_mod,
+    });
+
+    b.installArtifact(setdefault);
+
+    const run_setdefault = b.addRunArtifact(setdefault);
+    run_setdefault.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| run_setdefault.addArgs(args);
+
+    b.step("run-setdefault", "Set default")
+        .dependOn(&run_setdefault.step);
+
+    // ─────────────────────────────────────────────
     // cmdhandler
     // ─────────────────────────────────────────────
     const cmd_mod = b.createModule(.{

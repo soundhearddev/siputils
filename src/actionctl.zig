@@ -10,9 +10,9 @@ fn printUsage() void {
     std.debug.print(
         \\actionctl - SIP action client
         \\
-        \\  actionctl <identity> <host> <port> <action> [arg]
+        \\  actionctl [--identity NAME] <host> <port> <action> [arg]
         \\      Actions: ping, status, reload_config, shutdown
-        \\
+        \\      If --identity is omitted, the default identity is used.
     , .{});
 }
 
@@ -51,25 +51,42 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const argv = try init.minimal.args.toSlice(init.arena.allocator());
 
-    if (argv.len < 3) {
-        printUsage();
-        return;
+    var identity_name_opt: ?[]const u8 = null;
+    var pos_buf: [4][]const u8 = undefined;
+    var pos_count: usize = 0;
+
+    var i: usize = 1;
+    while (i < argv.len) : (i += 1) {
+        if (std.mem.eql(u8, argv[i], "--identity") and i + 1 < argv.len) {
+            i += 1;
+            identity_name_opt = argv[i];
+        } else if (pos_count < pos_buf.len) {
+            pos_buf[pos_count] = argv[i];
+            pos_count += 1;
+        }
     }
 
-    if (argv.len < 5) {
+    if (pos_count < 3) {
         printUsage();
         return error.MissingArguments;
     }
 
-    const host = argv[2];
-    const port = try std.fmt.parseInt(u16, argv[3], 10);
-    const action = actionFromString(argv[4]) orelse {
-        std.debug.print("Unknown action: {s}\n", .{argv[4]});
+    const host = pos_buf[0];
+    const port = try std.fmt.parseInt(u16, pos_buf[1], 10);
+    const action = actionFromString(pos_buf[2]) orelse {
+        std.debug.print("Unknown action: {s}\n", .{pos_buf[2]});
         return error.UnknownAction;
     };
-    const arg = if (argv.len > 5) argv[5] else "";
+    const arg = if (pos_count > 3) pos_buf[3] else "";
 
-    const identity_name = argv[1];
+    var default_buf: [64]u8 = undefined;
+    const identity_name = identity_name_opt orelse
+        (keymng.readDefaultIdentity(&default_buf) catch {
+            std.debug.print("No identity specified and no default is set.\n", .{});
+            std.debug.print("Use --identity NAME or set a default with 'setdefault NAME'.\n", .{});
+            return error.NoIdentity;
+        });
+
     const prompt_msg = try std.fmt.allocPrint(gpa, "[{s}] Password", .{identity_name});
     defer gpa.free(prompt_msg);
     const password = try promptPassword(gpa, prompt_msg);
@@ -82,7 +99,10 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("[actionctl] own identity (pubkey): {s}\n", .{hex});
     std.debug.print("[actionctl] -> must be trusted on server via --trust {s}\n", .{hex});
 
-    const ip = try registry.parseIpv4(host);
+    const ip = registry.parseIpv4(host) orelse {
+        std.debug.print("Ungültige IPv4-Adresse: {s}\n", .{host});
+        return error.InvalidHost;
+    };
 
     const sock = try sip.synet.createTcpSocket();
     defer sip.synet.close(sock);
