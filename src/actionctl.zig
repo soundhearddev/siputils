@@ -11,7 +11,7 @@ fn printUsage() void {
         \\actionctl - SIP action client
         \\
         \\  actionctl [--identity NAME] <host> <port> <action> [arg]
-        \\      Actions: ping, status, reload_config, shutdown
+        \\      Actions: ping, status, reload_config, shutdown, echo, metrics, peer_list, registry_lookup, whoami
         \\      If --identity is omitted, the default identity is used.
     , .{});
 }
@@ -21,6 +21,11 @@ fn actionFromString(s: []const u8) ?actions.Action {
     if (std.mem.eql(u8, s, "status")) return .status;
     if (std.mem.eql(u8, s, "reload_config")) return .reload_config;
     if (std.mem.eql(u8, s, "shutdown")) return .shutdown;
+    if (std.mem.eql(u8, s, "echo")) return .echo;
+    if (std.mem.eql(u8, s, "metrics")) return .metrics;
+    if (std.mem.eql(u8, s, "peer_list")) return .peer_list;
+    if (std.mem.eql(u8, s, "registry_lookup")) return .registry_lookup;
+    if (std.mem.eql(u8, s, "whoami")) return .whoami;
     return null;
 }
 
@@ -156,9 +161,8 @@ pub fn main(init: std.process.Init) !void {
     defer gpa.free(wire);
 
     try sip.synet.sendAll(sock, wire);
-    
-    std.debug.print("Action '{s}' gesendet, warte auf Antwort...\n", .{pos_buf[2]});
 
+    std.debug.print("Action '{s}' gesendet, warte auf Antwort...\n", .{pos_buf[2]});
 
     const inbound = try sip.translation.readInboundPacket(sock, gpa, session.rx);
     defer sip.translation.freeInboundPacket(gpa, inbound);

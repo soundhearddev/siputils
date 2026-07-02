@@ -3,20 +3,21 @@ const sip = @import("sip");
 
 const Ed25519 = std.crypto.sign.Ed25519;
 
-/// Vordefinierte Server-Actions. u8 -> feste, bekannte Menge.
-/// Die konkrete Ausführung ist hier bewusst simpel/egal (siehe Aufgabenstellung) -
-/// der Fokus liegt auf Auth/Verifizierung des Aufrufs.
 pub const Action = enum(u8) {
     ping = 0x01,
     status = 0x02,
     reload_config = 0x03,
     shutdown = 0x04,
+    echo = 0x05,
+    metrics = 0x06,
+    peer_list = 0x07,
+    registry_lookup = 0x08,
+    whoami = 0x09,
     _,
 };
 
 pub const ACTION_REQUEST_VERSION: u8 = 1;
 
-/// Fehler, die bei der Verifizierung eines Action-Requests auftreten koennen.
 pub const ActionError = error{
     UnknownAction,
     NotAuthorized,
@@ -26,18 +27,17 @@ pub const ActionError = error{
     MalformedRequest,
 } || std.mem.Allocator.Error;
 
-/// Der SIP-Payload fuer .Data Pakete, die eine Action ausloesen sollen.
-/// Wire-Format (alles big-endian wo relevant):
+/// The SIP payload for .Data packets that trigger actions.
+///
+/// Wire format (all big-endian where applicable):
 ///
 ///   [0]      u8   version           (= ACTION_REQUEST_VERSION)
 ///   [1]      u8   action_id
 ///   [2..10)  u64  nonce             (big endian, client-random)
-///   [10..18) i64  timestamp_unix    (big endian, Sekunden seit Epoch)
+///   [10..18) i64  timestamp_unix    (big endian, seconds since epoch)
 ///   [18..19) u8   arg_len
-///   [19..19+arg_len) arg bytes      (actionspezifisch, hier ungenutzt/optional)
-///   [..]     [64]u8 ed25519 signature ueber alle vorherigen Bytes
-///             plus conn_id (u64 BE) und seq_num (u32 BE) des SIP-Pakets,
-///             damit die Signatur an die konkrete Verbindung gebunden ist.
+///   [19..19+arg_len) arg bytes      (action-specific, unused/optional here)
+///   [..]     [64]u8 ed25519 signature over all previous bytes
 pub const ActionRequest = struct {
     version: u8,
     action: Action,
@@ -46,8 +46,6 @@ pub const ActionRequest = struct {
     arg: []const u8,
     signature: [Ed25519.Signature.encoded_length]u8,
 
-    /// Bytes, die tatsaechlich signiert wurden (ohne die Signatur selbst),
-    /// mit conn_id/seq_num des SIP-Transports als Bindung angehaengt.
     fn signedMessage(
         buf: []u8,
         version: u8,
@@ -78,8 +76,6 @@ pub const ActionRequest = struct {
         return buf[0..w];
     }
 
-    /// Baut einen signierten Request und serialisiert ihn direkt in `out`.
-    /// Gibt die genutzte Slice-Laenge zurueck.
     pub fn buildSigned(
         out: []u8,
         keys: sip.identity.KeyPair,
@@ -123,7 +119,6 @@ pub const ActionRequest = struct {
         return w;
     }
 
-    /// Parst einen rohen Payload in ein ActionRequest (ohne Signaturpruefung).
     pub fn parse(payload: []const u8) ActionError!ActionRequest {
         const header_len = 1 + 1 + 8 + 8 + 1;
         if (payload.len < header_len) return ActionError.MalformedRequest;
@@ -160,8 +155,6 @@ pub const ActionRequest = struct {
         };
     }
 
-    /// Prueft die Signatur gegen den erwarteten Public Key des Peers und
-    /// bindet sie an conn_id/seq_num des SIP-Transportpakets, in dem sie ankam.
     pub fn verify(
         self: ActionRequest,
         peer_identity_pubkey: [32]u8,
@@ -183,8 +176,6 @@ pub const ActionRequest = struct {
     }
 };
 
-/// Antwort auf einen Action-Request.
-/// Wire-Format: [1]u8 ok(1)/err(0) [2..4)u16 msg_len [msg bytes]
 pub const ActionResponse = struct {
     ok: bool,
     message: []const u8,
@@ -206,12 +197,8 @@ pub const ActionResponse = struct {
     }
 };
 
-/// Maximales Alter (Sekunden) eines Requests, bevor er als "stale" abgelehnt wird.
-/// Schuetzt zusammen mit dem Nonce-Cache vor Replay-Angriffen.
 pub const MAX_REQUEST_AGE_SECONDS: i64 = 30;
 
-/// Einfacher In-Memory Replay-Schutz: (peer_address, nonce) Paare mit Ablaufzeit.
-/// Bewusst simpel gehalten (linear scan + Ringpuffer), reicht fuer moderate Lastprofile.
 pub const NonceCache = struct {
     pub const Entry = struct {
         addr: [16]u8,
@@ -228,12 +215,10 @@ pub const NonceCache = struct {
         return .{ .entries = buf, .next = 0 };
     }
 
-    /// Gibt true zurueck wenn die Nonce neu ist (also der Request akzeptiert wird)
-    /// und merkt sie sich dabei. Gibt false zurueck bei Replay.
     pub fn checkAndInsert(self: *NonceCache, addr: [16]u8, nonce: u64, now: i64) bool {
         for (self.entries) |*e| {
             if (e.used and e.expires_at > now and std.mem.eql(u8, &e.addr, &addr) and e.nonce == nonce) {
-                return false; // replay
+                return false;
             }
         }
         const slot = &self.entries[self.next];
@@ -243,9 +228,6 @@ pub const NonceCache = struct {
     }
 };
 
-/// Server-seitige Autorisierungstabelle: welche mesh-Adressen duerfen welche Action ausfuehren.
-/// Bewusst statisch/im Code definiert (siehe Aufgabenstellung: Actions selbst sind erstmal egal,
-/// es geht um sauberes Rechte-Management).
 pub const KnownClient = struct {
     addr: [16]u8,
     pubkey: [32]u8,

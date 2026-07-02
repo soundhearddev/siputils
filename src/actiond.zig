@@ -2,6 +2,7 @@ const std = @import("std");
 const sip = @import("sip");
 const actions = @import("actions.zig");
 const keymng = @import("keymng.zig");
+const registry = @import("registry.zig");
 
 const Io = std.Io;
 
@@ -42,22 +43,50 @@ fn lookupPubkey(known: []const actions.KnownClient, addr: [16]u8) ?[32]u8 {
     return null;
 }
 
-fn buildAllowlist(known_clients: []const actions.KnownClient) [4]actions.ActionAllowlist {
+fn buildAllowlist(known_clients: []const actions.KnownClient) [9]actions.ActionAllowlist {
     return .{
         .{ .action = .ping, .allowed_clients = known_clients },
         .{ .action = .status, .allowed_clients = known_clients },
         .{ .action = .reload_config, .allowed_clients = known_clients },
         .{ .action = .shutdown, .allowed_clients = &[_]actions.KnownClient{} },
+        .{ .action = .echo, .allowed_clients = known_clients },
+        .{ .action = .metrics, .allowed_clients = known_clients },
+        .{ .action = .peer_list, .allowed_clients = known_clients },
+        .{ .action = .registry_lookup, .allowed_clients = known_clients },
+        .{ .action = .whoami, .allowed_clients = known_clients },
     };
 }
 
-fn dispatch(action: actions.Action, arg: []const u8) actions.ActionResponse {
-    _ = arg;
+const DispatchContext = struct {
+    identity_name: []const u8,
+    server_addr: [16]u8,
+    known_clients: []const actions.KnownClient,
+    metrics: *Metrics,
+    io: std.Io,
+};
+
+const Metrics = struct {
+    start_time: i64,
+    total_connections: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    auth_failures: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    actions_executed: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+
+    fn init(start_time: i64) Metrics {
+        return .{ .start_time = start_time };
+    }
+};
+
+fn dispatch(buf: []u8, action: actions.Action, arg: []const u8, ctx: DispatchContext) actions.ActionResponse {
     return switch (action) {
         .ping => .{ .ok = true, .message = "pong" },
-        .status => .{ .ok = true, .message = "status: running" },
+        .status => buildStatusResponse(buf, ctx),
         .reload_config => .{ .ok = true, .message = "config reloaded" },
         .shutdown => .{ .ok = false, .message = "shutdown not permitted" },
+        .echo => .{ .ok = true, .message = arg },
+        .metrics => buildMetricsResponse(buf, ctx),
+        .peer_list => buildPeerListResponse(buf, ctx),
+        .registry_lookup => buildRegistryLookupResponse(buf, ctx.io, arg),
+        .whoami => buildWhoamiResponse(buf, ctx),
         _ => .{ .ok = false, .message = "unknown action" },
     };
 }
@@ -71,6 +100,8 @@ fn handleActionPayload(
     known_clients: []const actions.KnownClient,
     allowlist: []const actions.ActionAllowlist,
     nonce_cache: *actions.NonceCache,
+    ctx: DispatchContext,
+    resp_buf: []u8,
 ) actions.ActionResponse {
     const req = actions.ActionRequest.parse(payload) catch {
         return .{ .ok = false, .message = "malformed request" };
@@ -81,6 +112,7 @@ fn handleActionPayload(
     };
 
     req.verify(peer_pubkey, conn_id, seq_num) catch {
+        _ = ctx.metrics.auth_failures.fetchAdd(1, .monotonic);
         return .{ .ok = false, .message = "invalid signature" };
     };
 
@@ -99,7 +131,9 @@ fn handleActionPayload(
         return .{ .ok = false, .message = @errorName(err) };
     };
 
-    return dispatch(req.action, req.arg);
+    const resp = dispatch(resp_buf, req.action, req.arg, ctx);
+    _ = ctx.metrics.actions_executed.fetchAdd(1, .monotonic);
+    return resp;
 }
 
 fn handleConnection(
@@ -108,8 +142,10 @@ fn handleConnection(
     sock: sip.synet.Socket,
     server_keys: sip.identity.KeyPair,
     server_addr: [16]u8,
+    identity_name: []const u8,
     known_clients: []const actions.KnownClient,
     nonce_cache: *actions.NonceCache,
+    metrics: *Metrics,
     verbose: bool,
 ) !void {
     defer sip.synet.close(sock);
@@ -145,7 +181,17 @@ fn handleConnection(
         return;
     };
 
+    var dispatch_buf: [400]u8 = undefined;
     const allowlist = buildAllowlist(known_clients);
+    const ctx = DispatchContext{
+        .identity_name = identity_name,
+        .server_addr = server_addr,
+        .known_clients = known_clients,
+        .metrics = metrics,
+        .io = io,
+    };
+
+    _ = ctx.metrics.total_connections.fetchAdd(1, .monotonic);
 
     const resp = handleActionPayload(
         io,
@@ -156,11 +202,9 @@ fn handleConnection(
         known_clients,
         &allowlist,
         nonce_cache,
+        ctx,
+        &dispatch_buf,
     );
-
-    if (verbose) {
-        std.debug.print("action processed: ok={} msg={s}\n", .{ resp.ok, resp.message });
-    }
 
     var resp_buf: [512]u8 = undefined;
     const encoded = resp.encode(&resp_buf) catch {
@@ -203,11 +247,111 @@ fn getIdentityPassword(gpa: std.mem.Allocator, identity_name: []const u8) ![]u8 
     return promptPassword(gpa, prompt_msg);
 }
 
+fn buildWhoamiResponse(buf: []u8, ctx: DispatchContext) actions.ActionResponse {
+    const msg = std.fmt.bufPrint(buf,
+        \\{{"identity":"{s}","address":"{x}"}}
+    , .{ ctx.identity_name, ctx.server_addr }) catch return .{ .ok = false, .message = "buffer too small" };
+    return .{ .ok = true, .message = msg };
+}
+
+fn buildMetricsResponse(buf: []u8, ctx: DispatchContext) actions.ActionResponse {
+    const now: i64 = @intCast(@divFloor(std.Io.Timestamp.now(ctx.io, .real).toNanoseconds(), std.time.ns_per_s));
+    const uptime = now - ctx.metrics.start_time;
+    const msg = std.fmt.bufPrint(buf,
+        \\{{"uptime_seconds":{d},"total_connections":{d},"auth_failures":{d},"actions_executed":{d},"known_peers":{d}}}
+    , .{
+        uptime,
+        ctx.metrics.total_connections.load(.monotonic),
+        ctx.metrics.auth_failures.load(.monotonic),
+        ctx.metrics.actions_executed.load(.monotonic),
+        ctx.known_clients.len,
+    }) catch return .{ .ok = false, .message = "buffer too small" };
+    return .{ .ok = true, .message = msg };
+}
+
+fn buildStatusResponse(buf: []u8, ctx: DispatchContext) actions.ActionResponse {
+    const now: i64 = @intCast(@divFloor(std.Io.Timestamp.now(ctx.io, .real).toNanoseconds(), std.time.ns_per_s));
+    const uptime = now - ctx.metrics.start_time;
+    const msg = std.fmt.bufPrint(buf,
+        \\{{"status":"running","identity":"{s}","uptime_seconds":{d},"known_peers":{d}}}
+    , .{ ctx.identity_name, uptime, ctx.known_clients.len }) catch return .{ .ok = false, .message = "buffer too small" };
+    return .{ .ok = true, .message = msg };
+}
+
+fn buildPeerListResponse(buf: []u8, ctx: DispatchContext) actions.ActionResponse {
+    var w: usize = 0;
+    const opening = "{\"peers\":[";
+    if (w + opening.len > buf.len) return .{ .ok = false, .message = "buffer too small" };
+    @memcpy(buf[w..][0..opening.len], opening);
+    w += opening.len;
+
+    for (ctx.known_clients, 0..) |client, idx| {
+        const piece = std.fmt.bufPrint(buf[w..], "{s}\"{x}\"", .{ if (idx > 0) "," else "", client.addr }) catch
+            return .{ .ok = false, .message = "buffer too small" };
+        w += piece.len;
+    }
+
+    if (w + 2 > buf.len) return .{ .ok = false, .message = "buffer too small" };
+    buf[w] = ']';
+    buf[w + 1] = '}';
+    w += 2;
+
+    return .{ .ok = true, .message = buf[0..w] };
+}
+
+fn buildRegistryLookupResponse(buf: []u8, io: std.Io, arg: []const u8) actions.ActionResponse {
+    if (arg.len == 0) return .{ .ok = false, .message = "missing name arg" };
+
+    const result = registry.resolve(io, undefined, arg) catch {
+        return .{ .ok = false, .message = "not found" };
+    };
+
+    switch (result.entry.kind) {
+        .ipv4 => {
+            const msg = std.fmt.bufPrint(buf,
+                \\{{"kind":"ipv4","addr":"{d}.{d}.{d}.{d}"}}
+            , .{ result.entry.ipv4[0], result.entry.ipv4[1], result.entry.ipv4[2], result.entry.ipv4[3] }) catch
+                return .{ .ok = false, .message = "buffer too small" };
+            return .{ .ok = true, .message = msg };
+        },
+        .ipv6 => {
+            var ip_buf: [40]u8 = undefined;
+            const ip_str = registry.formatIpv6(&ip_buf, result.entry.ipv6);
+            const msg = std.fmt.bufPrint(buf,
+                \\{{"kind":"ipv6","addr":"{s}"}}
+            , .{ip_str}) catch return .{ .ok = false, .message = "buffer too small" };
+            return .{ .ok = true, .message = msg };
+        },
+        .mesh => {
+            const msg = std.fmt.bufPrint(buf,
+                \\{{"kind":"mesh","addr":"{x}"}}
+            , .{result.entry.mesh}) catch return .{ .ok = false, .message = "buffer too small" };
+            return .{ .ok = true, .message = msg };
+        },
+    }
+}
+
+fn setReuseAddr(sock: sip.synet.Socket) void {
+    const val: c_int = 1;
+    const rc = std.os.linux.setsockopt(
+        sock,
+        std.os.linux.SOL.SOCKET,
+        std.os.linux.SO.REUSEADDR,
+        std.mem.asBytes(&val),
+        @sizeOf(c_int),
+    );
+    if (rc != 0) {
+        std.debug.print("Warning: failed to set SO_REUSEADDR\n", .{});
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
 
     const argv = try init.minimal.args.toSlice(init.arena.allocator());
+
+    var metrics = Metrics.init(@intCast(@divFloor(std.Io.Timestamp.now(io, .real).toNanoseconds(), std.time.ns_per_s)));
 
     var identity_name: []const u8 = "default";
     {
@@ -254,32 +398,25 @@ pub fn main(init: std.process.Init) !void {
     const listen_sock = try sip.synet.createTcpSocket();
     defer sip.synet.close(listen_sock);
 
+    setReuseAddr(listen_sock);
+
     const port: u16 = 4433;
     var sockaddr = sip.synet.buildSockaddrIn(.{ 0, 0, 0, 0 }, port);
     try sip.synet.bind(listen_sock, &sockaddr);
     try sip.synet.listen(listen_sock, 16);
-    std.debug.print("actiond hoert auf Port {d}\n", .{port});
+    std.debug.print("actiond is listening on port {d}\n", .{port});
 
     var nonce_entries: [256]actions.NonceCache.Entry = undefined;
     var nonce_cache = actions.NonceCache.init(&nonce_entries);
 
     while (true) {
         const client_sock = sip.synet.accept(listen_sock) catch |err| {
-            std.debug.print("accept fehlgeschlagen: {}\n", .{err});
+            std.debug.print("Connection failed: {}\n", .{err});
             continue;
         };
 
-        handleConnection(
-            io,
-            gpa,
-            client_sock,
-            server_keys,
-            server_addr,
-            known_buf[0..known_count],
-            &nonce_cache,
-            true,
-        ) catch |err| {
-            std.debug.print("Verbindung fehlgeschlagen: {}\n", .{err});
+        handleConnection(io, gpa, client_sock, server_keys, server_addr, identity_name, known_buf[0..known_count], &nonce_cache, &metrics, true) catch |err| {
+            std.debug.print("accept failed: {}\n", .{err});
         };
     }
 }
