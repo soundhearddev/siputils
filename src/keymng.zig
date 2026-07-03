@@ -120,7 +120,7 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
     fs.createDirPath(io, ROOT) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         error.AccessDenied => {
-            std.debug.print("Fehler: Kein Schreibzugriff auf '{s}'\n", .{ROOT});
+            std.debug.print("Error: No write access to '{s}'\n", .{ROOT});
             return err;
         },
         else => return err,
@@ -131,7 +131,7 @@ fn storeIdentity(io: std.Io, name: []const u8, kp: identity.KeyPair, password: [
     fs.createDirPath(io, dir) catch |err| switch (err) {
         error.PathAlreadyExists => return KeystoreError.IdentityAlreadyExists,
         error.AccessDenied => {
-            std.debug.print("Fehler: Kein Schreibzugriff auf '{s}'\n", .{dir});
+            std.debug.print("Error: No write access to '{s}'\n", .{dir});
             return err;
         },
         else => return err,

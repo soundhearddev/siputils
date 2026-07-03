@@ -1,6 +1,6 @@
 // TODO:
 // default user integration!!!!
-// etc...
+// Kommentare in englisch!!
 //
 //
 

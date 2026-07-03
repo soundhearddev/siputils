@@ -28,7 +28,7 @@ const ListCtx = struct {
 
 fn printIdentityEntry(ctx: *ListCtx, entry: keymng.IdentityEntry, name: []const u8) !void {
     if (!entry.valid) {
-        try ctx.stdout.print("{d}: {s}: <kein gültiger public key>\n", .{ ctx.idx, entry.name() });
+        try ctx.stdout.print("{d}: {s}: <invalid public key>\n", .{ ctx.idx, entry.name() });
         ctx.idx += 1;
         return;
     }
@@ -61,8 +61,8 @@ fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
         }
     }.cb) catch |err| switch (err) {
         keymng.ListError.KeyRootMissing => {
-            try stdout.writeAll("Keine Identitäten gefunden. (Ordner 'keys/' existiert nicht)\n");
-            try stdout.writeAll("Erstelle eine mit: sipctl new <name>\n");
+            try stdout.writeAll("No identities found. (Folder 'keys/' does not exist)\n");
+            try stdout.writeAll("Create one with: sipctl new <name>\n");
             try stdout.flush();
             return;
         },
@@ -70,39 +70,39 @@ fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
     };
 
     if (ctx.idx == 1) {
-        try stdout.writeAll("Keine Identitäten gefunden.\n");
-        try stdout.writeAll("Erstelle eine mit: sipctl new <name>\n");
+        try stdout.writeAll("No identities found.\n");
+        try stdout.writeAll("Create one with: sipctl new <name>\n");
     }
     try stdout.flush();
 }
 
 fn printHelp(stdout: *Io.Writer) !void {
     try stdout.writeAll(
-        \\sipctl - SIP Identitäts- und Adressverwaltung
+        \\sipctl - SIP identity and address management
         \\
-        \\Identitätsverwaltung:
-        \\  sipctl                      Adressen kompakt auflisten (wie 'ip a')
-        \\  sipctl -v, --verbose        Adressen mit Details auflisten
-        \\  sipctl list                 Alias für obiges
+        \\Identity management:
+        \\  sipctl                      List addresses in compact form (like 'ip a')
+        \\  sipctl -v, --verbose        List addresses with details
+        \\  sipctl list                 Alias for the above
         \\
-        \\  sipctl new <name>           Neue Identität erstellen
-        \\  sipctl show <name>          Details zu einer Identität anzeigen
-        \\  sipctl id <name>            Neue zufällige Session-/Peer-ID generieren
-        \\  sipctl export <name>        SIP-Adresse + Public Key ausgeben
-        \\  sipctl passwd <name>        Passwort einer Identität ändern
-        \\  sipctl rm <name>            Identität löschen
+        \\  sipctl new <name>           Create a new identity
+        \\  sipctl show <name>          Show details of an identity
+        \\  sipctl id <name>            Generate a new random session/peer ID
+        \\  sipctl export <name>        Output SIP address + public key
+        \\  sipctl passwd <name>       Change identity password
+        \\  sipctl rm <name>           Delete identity
         \\
-        \\Nachrichtenverwaltung:
+        \\Messaging:
         \\  sipctl send <identity> <host> [--port PORT] <message>
-        \\                              Nachricht an Server senden
-        \\                              Wenn <message> mit '@' beginnt, wird Dateiinhalt gesendet
+        \\                              Send a message to a server
+        \\                              If <message> starts with '@', file content is sent
         \\
-        \\  sipctl -h, --help           Diese Hilfe anzeigen
+        \\  sipctl -h, --help           Show this help message
         \\
-        \\Passwort-Optionen (new/passwd/send):
-        \\  --password <pw>             Passwort direkt übergeben
-        \\  SIP_PASSWORD Env-Variable    Passwort über Umgebungsvariable
-        \\  (sonst interaktiver, versteckter Prompt)
+        \\Password options (new/passwd/send):
+        \\  --password <pw>             Provide password directly
+        \\  SIP_PASSWORD env variable   Use environment variable for password
+        \\  (otherwise interactive hidden prompt)
         \\
     );
     try stdout.flush();
@@ -149,47 +149,47 @@ pub fn main(init: std.process.Init) !void {
 
     if (std.mem.eql(u8, final_cmd, "new")) {
         cmd.ctl.cmdNew(io, stdout, init.environ_map, &args) catch |err| switch (err) {
-            cmd.CliError.MissingArgument => try stdout.writeAll("Verwendung: sipctl new <name>\n"),
+            cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl new <name>\n"),
             else => return err,
         };
         try stdout.flush();
     } else if (std.mem.eql(u8, final_cmd, "show")) {
         cmd.ctl.cmdShow(io, stdout, &args) catch |err| switch (err) {
-            cmd.CliError.MissingArgument => try stdout.writeAll("Verwendung: sipctl show <name>\n"),
+            cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl show <name>\n"),
             else => return err,
         };
         try stdout.flush();
     } else if (std.mem.eql(u8, final_cmd, "id")) {
         cmd.ctl.cmdId(io, stdout, &args) catch |err| switch (err) {
-            cmd.CliError.MissingArgument => try stdout.writeAll("Verwendung: sipctl id <name>\n"),
+            cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl id <name>\n"),
             else => return err,
         };
         try stdout.flush();
     } else if (std.mem.eql(u8, final_cmd, "export")) {
         cmd.ctl.cmdExport(io, stdout, &args) catch |err| switch (err) {
-            cmd.CliError.MissingArgument => try stdout.writeAll("Verwendung: sipctl export <name>\n"),
+            cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl export <name>\n"),
             else => return err,
         };
         try stdout.flush();
     } else if (std.mem.eql(u8, final_cmd, "rm") or std.mem.eql(u8, final_cmd, "remove") or std.mem.eql(u8, final_cmd, "delete")) {
         cmd.ctl.cmdRemove(io, stdout, &args) catch |err| switch (err) {
-            cmd.CliError.MissingArgument => try stdout.writeAll("Verwendung: sipctl rm <name>\n"),
+            cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl rm <name>\n"),
             else => return err,
         };
         try stdout.flush();
     } else if (std.mem.eql(u8, final_cmd, "passwd")) {
         cmd.ctl.cmdPasswd(io, stdout, init.environ_map, &args) catch |err| switch (err) {
-            cmd.CliError.MissingArgument => try stdout.writeAll("Verwendung: sipctl passwd <name>\n"),
+            cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl passwd <name>\n"),
             else => return err,
         };
         try stdout.flush();
     } else if (std.mem.eql(u8, final_cmd, "send")) {
         cmd.ctl.cmdSend(io, gpa, stdout, init.environ_map, &args) catch |err| {
-            std.debug.print("Fehler beim Senden: {}\n", .{err});
+            std.debug.print("Send error: {}\n", .{err});
         };
     } else {
-        try stdout.print("Unbekannter Befehl: '{s}'\n", .{final_cmd});
-        try stdout.writeAll("Siehe 'sipctl --help' für Hilfe.\n");
+        try stdout.print("Unknown command: '{s}'\n", .{final_cmd});
+        try stdout.writeAll("See 'sipctl --help' for help.\n");
         try stdout.flush();
     }
 }
