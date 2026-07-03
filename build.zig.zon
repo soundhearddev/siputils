@@ -1,10 +1,21 @@
 .{
     .name = .siputils,
-    .version = "0.0.1",
+    .version = "0.1.0",
 
     .fingerprint = 0xc0dce11ba3fde08b,
 
     .minimum_zig_version = "0.16.0",
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src/cmdhandler.zig",
+        "src/filesystem.zig",
+        "src/keymng.zig",
+        "src/registry.zig",
+        "src/utils.zig",
+        "src/verbose_actionctl.zig",
+    },
 
     .dependencies = .{
         .sip = .{
@@ -12,6 +23,4 @@
             .hash = "sip-0.1.4-QVQ7bD8uAQDMnrObwTr7DsS6ODXa7y5hbEPe7xveaeO5",
         },
     },
-
-    .paths = .{""},
 }

@@ -1,5 +1,6 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("siputils");
+const helpers = utils.helpers;
 
 const DEBUG = true;
 const ANZAHL_IPS: usize = 1;
@@ -9,14 +10,14 @@ fn buildAddress(gpa: std.mem.Allocator, io: std.Io, count: usize, prefix: []cons
     var created: std.ArrayListUnmanaged([]const u8) = .empty;
 
     for (0..count) |_| {
-        var new_addr = try utils.generateAddress(gpa, prefix, init);
+        var new_addr = try helpers.generateAddress(gpa, prefix, init);
 
         while (before.contains(new_addr)) {
             gpa.free(new_addr);
-            new_addr = try utils.generateAddress(gpa, prefix, init);
+            new_addr = try helpers.generateAddress(gpa, prefix, init);
         }
 
-        const success = try utils.addAddress(gpa, io, iface, new_addr, ttl);
+        const success = try helpers.addAddress(gpa, io, iface, new_addr, ttl);
         if (success) {
             try created.append(gpa, new_addr);
             try before.put(new_addr, {});
@@ -37,21 +38,21 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
-    utils.isRoot();
+    helpers.isRoot();
 
     var interface: []u8 = undefined;
     if (DEBUG) {
         std.debug.print("[MODE] DEBUG mode active. Using dummy interface.\n", .{});
-        interface = try utils.ensureDummyIface(gpa, io, "ipwrap0");
+        interface = try helpers.ensureDummyIface(gpa, io, "ipwrap0");
     } else {
         std.debug.print("[MODE] LIVE mode active. Determining default interface...\n", .{});
-        interface = try utils.getDefaultIface(gpa, io);
+        interface = try helpers.getDefaultIface(gpa, io);
         std.debug.print("[i] Default interface found: {s}\n", .{interface});
     }
     defer gpa.free(interface);
 
     var prefix: []u8 = undefined;
-    if (utils.getPrefix(gpa, io, interface)) |p| {
+    if (helpers.getPrefix(gpa, io, interface)) |p| {
         prefix = p;
     } else |_| {
         if (DEBUG) {
@@ -63,7 +64,7 @@ pub fn main(init: std.process.Init) !void {
     }
     defer gpa.free(prefix);
 
-    var already_assigned = try utils.currentAddresses(gpa, io, interface);
+    var already_assigned = try helpers.currentAddresses(gpa, io, interface);
     defer {
         var it = already_assigned.keyIterator();
         while (it.next()) |key| gpa.free(key.*);

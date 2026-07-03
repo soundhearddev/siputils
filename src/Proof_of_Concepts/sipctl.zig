@@ -3,14 +3,15 @@
 // etc...
 //
 //
-
 const std = @import("std");
 const sip = @import("sip");
-const keymng = @import("keymng.zig");
 const Io = std.Io;
-const registry = @import("registry.zig");
-const fs = @import("filesystem.zig");
-const cmd = @import("cmdhandler.zig");
+
+const utils = @import("siputils");
+const keymng = utils.keymng;
+const registry = utils.registry;
+const fs = utils.filesystem;
+const cmd = utils.cmdhandler;
 
 var config = struct { verbose: bool }{ .verbose = false };
 

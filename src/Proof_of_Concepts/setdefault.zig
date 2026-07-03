@@ -1,5 +1,6 @@
 const std = @import("std");
-const keymng = @import("keymng.zig");
+const utils = @import("siputils");
+const keymng = utils.keymng;
 
 fn printUsage() void {
     std.debug.print(

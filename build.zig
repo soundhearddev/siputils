@@ -11,17 +11,28 @@ pub fn build(b: *std.Build) void {
 
     const sip_mod = sip_dep.module("sip");
 
+    // Referenz behalten, nicht verwerfen!
+    const siputils_mod = b.addModule("siputils", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sip", .module = sip_mod },
+        },
+    });
+
     // ─────────────────────────────────────────────
     // sipctl
     // ─────────────────────────────────────────────
 
     const sipctl_mod = b.createModule(.{
-        .root_source_file = b.path("src/sipctl.zig"),
+        .root_source_file = b.path("src/Proof_of_Concepts/sipctl.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     sipctl_mod.addImport("sip", sip_mod);
+    sipctl_mod.addImport("siputils", siputils_mod);
 
     const sipctl = b.addExecutable(.{
         .name = "sipctl",
@@ -39,43 +50,17 @@ pub fn build(b: *std.Build) void {
         .dependOn(&run_sipctl.step);
 
     // ─────────────────────────────────────────────
-    // server_test
-    // ─────────────────────────────────────────────
-
-    // const server_mod = b.createModule(.{
-    //     .root_source_file = b.path("src/svr_clt_test.zig"),
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
-
-    // server_mod.addImport("sip", sip_mod);
-
-    // const server = b.addExecutable(.{
-    //     .name = "server_test",
-    //     .root_module = server_mod,
-    // });
-
-    // b.installArtifact(server);
-
-    // const run_server = b.addRunArtifact(server);
-    // run_server.step.dependOn(b.getInstallStep());
-
-    // if (b.args) |args| run_server.addArgs(args);
-
-    // b.step("run-server", "Run server_test")
-    //     .dependOn(&run_server.step);
-
-    // ─────────────────────────────────────────────
     // header_test
     // ─────────────────────────────────────────────
 
     const header_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/header_test.zig"),
+        .root_source_file = b.path("src/Proof_of_Concepts/header_test.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     header_test_mod.addImport("sip", sip_mod);
+    header_test_mod.addImport("siputils", siputils_mod);
 
     const header_test = b.addExecutable(.{
         .name = "header_test",
@@ -97,12 +82,13 @@ pub fn build(b: *std.Build) void {
     // ─────────────────────────────────────────────
 
     const discovery_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/discovery_test.zig"),
+        .root_source_file = b.path("src/Proof_of_Concepts/discovery_test.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     discovery_test_mod.addImport("sip", sip_mod);
+    discovery_test_mod.addImport("siputils", siputils_mod);
 
     const discovery_test = b.addExecutable(.{
         .name = "discovery_test",
@@ -123,12 +109,13 @@ pub fn build(b: *std.Build) void {
     // address
     // ─────────────────────────────────────────────
     const address_mod = b.createModule(.{
-        .root_source_file = b.path("src/address.zig"),
+        .root_source_file = b.path("src/Proof_of_Concepts/address.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     address_mod.addImport("sip", sip_mod);
+    address_mod.addImport("siputils", siputils_mod);
 
     const address = b.addExecutable(.{
         .name = "address",
@@ -149,12 +136,13 @@ pub fn build(b: *std.Build) void {
     // sipd
     // ─────────────────────────────────────────────
     const sipd_mod = b.createModule(.{
-        .root_source_file = b.path("src/sipd.zig"),
+        .root_source_file = b.path("src/Proof_of_Concepts/sipd.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     sipd_mod.addImport("sip", sip_mod);
+    sipd_mod.addImport("siputils", siputils_mod);
 
     const sipd = b.addExecutable(.{
         .name = "sipd",
@@ -175,12 +163,13 @@ pub fn build(b: *std.Build) void {
     // setdefault
     // ─────────────────────────────────────────────
     const setdefault_mod = b.createModule(.{
-        .root_source_file = b.path("src/setdefault.zig"),
+        .root_source_file = b.path("src/Proof_of_Concepts/setdefault.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     setdefault_mod.addImport("sip", sip_mod);
+    setdefault_mod.addImport("siputils", siputils_mod);
 
     const setdefault = b.addExecutable(.{
         .name = "set-default",
@@ -207,90 +196,20 @@ pub fn build(b: *std.Build) void {
     });
 
     cmd_mod.addImport("sip", sip_mod);
-
-    // ─────────────────────────────────────────────
-    // actions
-    // ─────────────────────────────────────────────
-    const actiond_mod = b.createModule(.{
-        .root_source_file = b.path("src/actiond.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    actiond_mod.addImport("sip", sip_mod);
-
-    const actiond = b.addExecutable(.{
-        .name = "actiond",
-        .root_module = actiond_mod,
-    });
-
-    b.installArtifact(actiond);
-
-    const run_actiond = b.addRunArtifact(actiond);
-    run_actiond.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| run_actiond.addArgs(args);
-
-    b.step("run-actiond", "Run actiond")
-        .dependOn(&run_actiond.step);
-
-    const actionctl_mod = b.createModule(.{
-        .root_source_file = b.path("src/actionctl.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    actionctl_mod.addImport("sip", sip_mod);
-
-    const actionctl = b.addExecutable(.{
-        .name = "actionctl",
-        .root_module = actionctl_mod,
-    });
-
-    b.installArtifact(actionctl);
-
-    const run_actionctl = b.addRunArtifact(actionctl);
-    run_actionctl.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| run_actionctl.addArgs(args);
-
-    b.step("run-actionctl", "Run actionctl")
-        .dependOn(&run_actionctl.step);
-
-    const verbose_actionctl_mod = b.createModule(.{
-        .root_source_file = b.path("src/verbose_actionctl.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    verbose_actionctl_mod.addImport("sip", sip_mod);
-
-    const verbose_actionctl = b.addExecutable(.{
-        .name = "verbose_actionctl",
-        .root_module = verbose_actionctl_mod,
-    });
-
-    b.installArtifact(verbose_actionctl);
-
-    const run_verbose_actionctl = b.addRunArtifact(verbose_actionctl);
-    run_verbose_actionctl.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| run_verbose_actionctl.addArgs(args);
-
-    b.step("run-verbose_actionctl", "Run verbose_actionctl")
-        .dependOn(&run_verbose_actionctl.step);
+    cmd_mod.addImport("siputils", siputils_mod);
 
     // ─────────────────────────────────────────────
     // sniffer
     // ─────────────────────────────────────────────
 
     const discover_mod = b.createModule(.{
-        .root_source_file = b.path("src/sniffer.zig"),
+        .root_source_file = b.path("src/Proof_of_Concepts/sniffer.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     discover_mod.addImport("sip", sip_mod);
+    discover_mod.addImport("siputils", siputils_mod);
 
     const sniffer = b.addExecutable(.{
         .name = "sniffer",

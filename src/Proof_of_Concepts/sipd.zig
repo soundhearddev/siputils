@@ -6,8 +6,10 @@
 
 const std = @import("std");
 const sip = @import("sip");
-const keymng = @import("keymng.zig");
-const fs = @import("filesystem.zig");
+const utils = @import("siputils");
+
+const keymng = utils.keymng;
+const fs = utils.filesystem;
 // ---------------------------------------------------------------------------
 // Konstanten
 // ---------------------------------------------------------------------------
