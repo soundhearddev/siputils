@@ -13,7 +13,7 @@
         "src/filesystem.zig",
         "src/keymng.zig",
         "src/registry.zig",
-        "src/utils.zig",
+        "src/helpers.zig",
         "src/verbose_actionctl.zig",
     },
 
