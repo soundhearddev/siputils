@@ -93,6 +93,13 @@ fn printHelp(stdout: *Io.Writer) !void {
         \\  sipctl passwd <name>       Change identity password
         \\  sipctl rm <name>           Delete identity
         \\
+        \\Trust management:
+        \\  sipctl trust <pubkey_hex> <label>
+        \\                              Add a peer public key to the trust whitelist
+        \\  sipctl untrust <pubkey_hex>
+        \\                              Remove a peer public key from the whitelist
+        \\  sipctl trust-list           List all currently trusted peers
+        \\
         \\Messaging:
         \\  sipctl send <identity> <host> [--port PORT] <message>
         \\                              Send a message to a server
@@ -187,6 +194,18 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, final_cmd, "send")) {
         cmd.ctl.cmdSend(io, gpa, stdout, init.environ_map, &args) catch |err| {
             std.debug.print("Send error: {}\n", .{err});
+        };
+    } else if (std.mem.eql(u8, final_cmd, "trust")) {
+        cmd.ctl.cmdTrust(io, stdout, &args) catch |err| {
+            std.debug.print("Trust error: {}\n", .{err});
+        };
+    } else if (std.mem.eql(u8, final_cmd, "untrust")) {
+        cmd.ctl.cmdUntrust(io, stdout, &args) catch |err| {
+            std.debug.print("Untrust error: {}\n", .{err});
+        };
+    } else if (std.mem.eql(u8, final_cmd, "trust-list")) {
+        cmd.ctl.cmdTrustList(io, stdout) catch |err| {
+            std.debug.print("Trust-list error: {}\n", .{err});
         };
     } else {
         try stdout.print("Unknown command: '{s}'\n", .{final_cmd});
