@@ -1,6 +1,6 @@
 .{
     .name = .siputils,
-    .version = "0.1.0",
+    .version = "0.1.1",
 
     .fingerprint = 0xc0dce11ba3fde08b,
 
@@ -14,8 +14,8 @@
 
     .dependencies = .{
         .sip = .{
-            .url = "https://github.com/soundhearddev/sip/archive/refs/tags/0.1.4-beta1.tar.gz",
-            .hash = "sip-0.1.4-QVQ7bD8uAQDMnrObwTr7DsS6ODXa7y5hbEPe7xveaeO5",
+            .url = "https://github.com/soundhearddev/sip/archive/refs/tags/0.1.5-beta1.tar.gz",
+            .hash = "sip-0.1.5-QVQ7bGcSAQCA9Dwoiz2GoDo41ws9B5W1BqtedHweJ1Fl",
         },
     },
 }

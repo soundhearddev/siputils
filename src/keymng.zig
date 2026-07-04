@@ -19,22 +19,6 @@ pub const KeystoreError = error{
     ChmodFailed,
 };
 
-// ============================================================================
-// TrustStore: globale Peer-Whitelist auf Basis von Ed25519 Public Keys.
-//
-// Sicherheitsmodell: default-deny, silent-drop.
-// Ein Peer, dessen Public Key nicht in dieser Liste steht, wird nirgendwo
-// im System beantwortet -- keine Fehlermeldung, kein Response-Paket, keine
-// sichtbare Reaktion. Das Einpflegen eines neuen Peers geschieht ausschliesslich
-// manuell (sipctl trust <pubkey_hex> <label>), es gibt keinen automatischen
-// TOFU-Mechanismus und keine Server-seitige Anzeige unbekannter Verbindungsversuche.
-//
-// Speicherformat: eigene Binaerdatei (trust.bin), gleiches Header+Record
-// Schema wie registry.zig -- feste Satzlaenge, FLAG_DELETED statt Compaction
-// bei jedem Remove, damit ein Absturz mitten im Schreiben nie die ganze
-// Datei korrumpiert.
-// ============================================================================
-
 pub const TRUST_FILE = CONFIG_ROOT ++ "/trust.bin";
 
 const TRUST_MAGIC = "SPTR";
@@ -49,7 +33,7 @@ pub const TrustError = error{
     AlreadyTrusted,
     NotFound,
     CorruptFile,
-    InvalidPubkeyHex,
+    InvalidAddrHex,
 };
 
 const TrustHeader = extern struct {
@@ -65,8 +49,8 @@ const TrustHeader = extern struct {
 };
 
 const TrustRecord = extern struct {
-    pubkey: [32]u8,
-    label: [64]u8, // NUL-terminiert / -gepolstert
+    addr: [16]u8,
+    label: [64]u8,
     flags: u16,
 
     fn isDeleted(self: *const TrustRecord) bool {
@@ -79,15 +63,10 @@ const TrustRecord = extern struct {
     }
 };
 
-// Die tatsächliche Satzgröße wird vom Compiler übernommen statt manuell
-// geraten -- das macht ein Auseinanderlaufen von Struct-Layout (inkl.
-// jeglichem Alignment-Padding, das extern struct hinzufügt) und der
-// Konstante strukturell unmöglich.
 const TRUST_RECORD_SIZE: usize = @sizeOf(TrustRecord);
 
-/// Ein einzelner Eintrag der Trust-Liste, zum Auflisten/Anzeigen.
 pub const TrustedPeer = struct {
-    pubkey: [32]u8,
+    addr: [16]u8,
     label_buf: [64]u8,
     label_len: usize,
 
@@ -160,9 +139,7 @@ fn trustRecordCount(io: Io, f: Io.File) !u32 {
     return @intCast((stat.size - TRUST_HEADER_SIZE) / TRUST_RECORD_SIZE);
 }
 
-/// Fuegt einen neuen vertrauenswuerdigen Peer hinzu (per Public Key).
-/// Schlaegt fehl, wenn der Key bereits eingetragen ist.
-pub fn trustPeer(io: Io, pubkey: [32]u8, label: []const u8) !void {
+pub fn trustPeer(io: Io, addr: [16]u8, label: []const u8) !void {
     if (label.len > TRUST_MAX_LABEL_LEN) return TrustError.LabelTooLong;
 
     const f = try trustOpenOrCreate(io);
@@ -173,19 +150,18 @@ pub fn trustPeer(io: Io, pubkey: [32]u8, label: []const u8) !void {
 
     for (0..total) |i| {
         const rec = try trustReadRecord(io, f, @intCast(i));
-        if (!rec.isDeleted() and std.mem.eql(u8, &rec.pubkey, &pubkey)) {
+        if (!rec.isDeleted() and std.mem.eql(u8, &rec.addr, &addr)) {
             return TrustError.AlreadyTrusted;
         }
     }
 
     var new_rec = TrustRecord{
-        .pubkey = pubkey,
+        .addr = addr,
         .label = [_]u8{0} ** 64,
         .flags = 0,
     };
     @memcpy(new_rec.label[0..label.len], label);
 
-    // Freien (geloeschten) Slot wiederverwenden, sonst anhaengen.
     for (0..total) |i| {
         const rec = try trustReadRecord(io, f, @intCast(i));
         if (rec.isDeleted()) {
@@ -201,8 +177,7 @@ pub fn trustPeer(io: Io, pubkey: [32]u8, label: []const u8) !void {
     try trustWriteHeader(io, f, header);
 }
 
-/// Entfernt einen Peer aus der Whitelist (soft-delete via Flag).
-pub fn untrustPeer(io: Io, pubkey: [32]u8) !void {
+pub fn untrustPeer(io: Io, addr: [16]u8) !void {
     const f = try trustOpenOrCreate(io);
     defer f.close(io);
 
@@ -211,7 +186,7 @@ pub fn untrustPeer(io: Io, pubkey: [32]u8) !void {
 
     for (0..total) |i| {
         var rec = try trustReadRecord(io, f, @intCast(i));
-        if (!rec.isDeleted() and std.mem.eql(u8, &rec.pubkey, &pubkey)) {
+        if (!rec.isDeleted() and std.mem.eql(u8, &rec.addr, &addr)) {
             rec.flags |= TRUST_FLAG_DELETED;
             try trustWriteRecord(io, f, @intCast(i), rec);
             if (header.count > 0) header.count -= 1;
@@ -222,11 +197,7 @@ pub fn untrustPeer(io: Io, pubkey: [32]u8) !void {
     return TrustError.NotFound;
 }
 
-/// Die zentrale Sicherheitspruefung: darf dieser Public Key ueberhaupt reden?
-/// Wird von der Action-/Request-Verarbeitung VOR jeder Signaturpruefung und
-/// VOR jeder Antwort aufgerufen. Bei `false` folgt: nichts. Kein Fehlerpaket,
-/// kein nach aussen sichtbares Antwortverhalten.
-pub fn isTrusted(io: Io, pubkey: [32]u8) bool {
+pub fn isTrusted(io: Io, addr: [16]u8) bool {
     const f = trustOpenReadOnly(io) catch return false;
     defer f.close(io);
 
@@ -235,13 +206,11 @@ pub fn isTrusted(io: Io, pubkey: [32]u8) bool {
     for (0..total) |i| {
         const rec = trustReadRecord(io, f, @intCast(i)) catch return false;
         if (rec.isDeleted()) continue;
-        if (std.mem.eql(u8, &rec.pubkey, &pubkey)) return true;
+        if (std.mem.eql(u8, &rec.addr, &addr)) return true;
     }
     return false;
 }
 
-/// Iteriert ueber alle aktiven (nicht geloeschten) Trust-Eintraege, z.B. fuer
-/// `sipctl trust list`.
 pub fn forEachTrustedPeer(
     io: Io,
     comptime Context: type,
@@ -261,7 +230,7 @@ pub fn forEachTrustedPeer(
         if (rec.isDeleted()) continue;
 
         var entry: TrustedPeer = undefined;
-        entry.pubkey = rec.pubkey;
+        entry.addr = rec.addr;
         const lbl = rec.getLabel();
         entry.label_len = @min(lbl.len, entry.label_buf.len);
         @memcpy(entry.label_buf[0..entry.label_len], lbl[0..entry.label_len]);
@@ -270,12 +239,10 @@ pub fn forEachTrustedPeer(
     }
 }
 
-/// Parst einen Hex-String (64 Zeichen) zu einem 32-Byte Public Key.
-/// Praktisch fuer CLI-Eingaben wie `sipctl trust <hex> <label>`.
-pub fn parsePubkeyHex(text: []const u8) ![32]u8 {
-    if (text.len != 64) return TrustError.InvalidPubkeyHex;
-    var out: [32]u8 = undefined;
-    _ = std.fmt.hexToBytes(&out, text) catch return TrustError.InvalidPubkeyHex;
+pub fn parseAddrHex(text: []const u8) ![16]u8 {
+    if (text.len != 32) return TrustError.InvalidAddrHex;
+    var out: [16]u8 = undefined;
+    _ = std.fmt.hexToBytes(&out, text) catch return TrustError.InvalidAddrHex;
     return out;
 }
 

@@ -420,26 +420,26 @@ pub const ctl = struct {
     }
 
     pub fn cmdTrust(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
-        const pubkey_hex = args.next() orelse {
-            try stdout.writeAll("Verwendung: sipctl trust <pubkey_hex> <label>\n");
+        const addr_hex = args.next() orelse {
+            try stdout.writeAll("Verwendung: sipctl trust <addr_hex> <label>\n");
             try stdout.flush();
             return;
         };
         const label = args.next() orelse {
-            try stdout.writeAll("Verwendung: sipctl trust <pubkey_hex> <label>\n");
+            try stdout.writeAll("Verwendung: sipctl trust <addr_hex> <label>\n");
             try stdout.flush();
             return;
         };
 
-        const pubkey = keymng.parsePubkeyHex(pubkey_hex) catch {
-            try stdout.writeAll("Fehler: Ungültiger Public Key (erwartet 64 Hex-Zeichen).\n");
+        const addr = keymng.parseAddrHex(addr_hex) catch {
+            try stdout.writeAll("Fehler: Ungültige Adresse (erwartet 32 Hex-Zeichen).\n");
             try stdout.flush();
             return;
         };
 
-        keymng.trustPeer(io, pubkey, label) catch |err| switch (err) {
+        keymng.trustPeer(io, addr, label) catch |err| switch (err) {
             keymng.TrustError.AlreadyTrusted => {
-                try stdout.print("Fehler: Public Key ist bereits vertrauenswürdig ('{s}' erneut nötig? -> zuerst untrust).\n", .{label});
+                try stdout.print("Fehler: Adresse ist bereits vertrauenswürdig ('{s}' erneut nötig? -> zuerst untrust).\n", .{label});
                 try stdout.flush();
                 return;
             },
@@ -449,52 +449,52 @@ pub const ctl = struct {
                 return;
             },
             error.AccessDenied => {
-                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl trust <pubkey_hex> <label>\n");
+                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl trust <addr_hex> <label>\n");
                 try stdout.flush();
                 return;
             },
             else => return err,
         };
 
-        try stdout.print("[+] Peer vertraut: {s} ({x})\n", .{ label, pubkey });
+        try stdout.print("[+] Peer vertraut: {s} ({x})\n", .{ label, addr });
         try stdout.flush();
     }
 
     pub fn cmdUntrust(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
-        const pubkey_hex = args.next() orelse {
-            try stdout.writeAll("Verwendung: sipctl untrust <pubkey_hex>\n");
+        const addr_hex = args.next() orelse {
+            try stdout.writeAll("Verwendung: sipctl untrust <addr_hex>\n");
             try stdout.flush();
             return;
         };
 
-        const pubkey = keymng.parsePubkeyHex(pubkey_hex) catch {
-            try stdout.writeAll("Fehler: Ungültiger Public Key (erwartet 64 Hex-Zeichen).\n");
+        const addr = keymng.parseAddrHex(addr_hex) catch {
+            try stdout.writeAll("Fehler: Ungültige Adresse (erwartet 32 Hex-Zeichen).\n");
             try stdout.flush();
             return;
         };
 
-        keymng.untrustPeer(io, pubkey) catch |err| switch (err) {
+        keymng.untrustPeer(io, addr) catch |err| switch (err) {
             keymng.TrustError.NotFound => {
-                try stdout.writeAll("Fehler: Dieser Public Key steht nicht auf der Trust-Liste.\n");
+                try stdout.writeAll("Fehler: Diese Adresse steht nicht auf der Trust-Liste.\n");
                 try stdout.flush();
                 return;
             },
             error.AccessDenied => {
-                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl untrust <pubkey_hex>\n");
+                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl untrust <addr_hex>\n");
                 try stdout.flush();
                 return;
             },
             else => return err,
         };
 
-        try stdout.print("[-] Peer entfernt: {x}\n", .{pubkey});
+        try stdout.print("[-] Peer entfernt: {x}\n", .{addr});
         try stdout.flush();
     }
 
     const TrustListCtx = struct { stdout: *Io.Writer };
 
     fn printTrustedPeer(ctx: TrustListCtx, entry: keymng.TrustedPeer) !void {
-        try ctx.stdout.print("{x}  {s}\n", .{ entry.pubkey, entry.label() });
+        try ctx.stdout.print("{x}  {s}\n", .{ entry.addr, entry.label() });
     }
 
     pub fn cmdTrustList(io: std.Io, stdout: *Io.Writer) !void {
