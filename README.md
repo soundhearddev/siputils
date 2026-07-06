@@ -1,5 +1,5 @@
 # **siputils**
-### **utils for SIP**
+A Collection of utils wich use the sip framework 
 
 Linux only
 
@@ -43,3 +43,11 @@ send message:
 ```
  sipctl send <identity> <host> [--port PORT] <message>
 ```
+
+
+## TODO:
+- [ ] Add Installer
+- [ ] Domain Resolution
+- [ ] automatic update of IP 
+
+ 
