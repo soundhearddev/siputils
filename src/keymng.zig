@@ -7,6 +7,7 @@ const fs = @import("filesystem.zig");
 pub const DEFAULT_LINK_NAME = "default";
 
 pub const CONFIG_ROOT = "/etc/sip";
+pub const BIN_ROOT = fs.get_bin_path();
 pub const KEY_ROOT = "/keys";
 
 pub const ROOT = CONFIG_ROOT ++ KEY_ROOT;
@@ -19,7 +20,7 @@ pub const KeystoreError = error{
     ChmodFailed,
 };
 
-pub const TRUST_FILE = CONFIG_ROOT ++ "/trust.bin";
+pub const TRUST_FILE = BIN_ROOT ++ "/trust.bin";
 
 const TRUST_MAGIC = "SPTR";
 const TRUST_VERSION: u8 = 1;

@@ -1,8 +1,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-pub fn get_registry_path() []const u8 {
-    const PATH = "/var/lib/sip";
+pub fn get_bin_path() []const u8 {
+    const PATH = "/etc/sip/bin";
 
     return PATH;
 }

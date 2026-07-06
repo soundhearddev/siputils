@@ -16,8 +16,6 @@ const fs = utils.filesystem;
 
 const CONFIG_PATH: []const u8 = fs.get_config_path();
 const DEFAULT_PORT: u16 = 9443;
-const DEFAULT_PIDFILE: []const u8 = "/run/sipd.pid";
-const DEFAULT_RUNTIME_DIR: []const u8 = "/run/sipd";
 const MAX_FRAME_SIZE: u32 = 256 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -36,8 +34,6 @@ const DaemonConfig = struct {
     use_v6: bool = false,
     output_path: ?[]const u8 = null,
     verbose: bool = false,
-    pidfile: []const u8 = DEFAULT_PIDFILE,
-    runtime_dir: []const u8 = DEFAULT_RUNTIME_DIR,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,8 +44,6 @@ const DaemonConfig = struct {
 //   use_v6        = false
 //   output_path   = /var/spool/sip/payload
 //   verbose       = true
-//   pidfile       = /run/sipd.pid
-//   runtime_dir   = /run/sipd
 // ---------------------------------------------------------------------------
 
 pub fn formatSipAddress(buf: []u8, name: []const u8, base: [16]u8) ![]const u8 {
@@ -70,8 +64,6 @@ fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Daemo
     var use_v6: bool = false;
     var output_path: ?[]u8 = null;
     var verbose: bool = false;
-    var pidfile: []u8 = try allocator.dupe(u8, DEFAULT_PIDFILE);
-    var runtime_dir: []u8 = try allocator.dupe(u8, DEFAULT_RUNTIME_DIR);
 
     var lines = std.mem.splitScalar(u8, raw, '\n');
     var line_nr: usize = 0;
@@ -80,8 +72,6 @@ fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Daemo
         if (identity_name) |n| allocator.free(n);
         if (host) |h| allocator.free(h);
         if (output_path) |o| allocator.free(o);
-        allocator.free(pidfile);
-        allocator.free(runtime_dir);
     }
 
     while (lines.next()) |line_raw| {
@@ -122,12 +112,6 @@ fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Daemo
                 std.debug.print("[sipd] Fehler: Ungültiger Bool in Zeile {d}: {s}\n", .{ line_nr, val });
                 return error.InvalidBool;
             };
-        } else if (std.mem.eql(u8, key, "pidfile")) {
-            allocator.free(pidfile);
-            pidfile = try allocator.dupe(u8, val);
-        } else if (std.mem.eql(u8, key, "runtime_dir")) {
-            allocator.free(runtime_dir);
-            runtime_dir = try allocator.dupe(u8, val);
         } else {
             std.debug.print("[sipd] Warnung: Unbekannter Schlüssel in Zeile {d}: {s}\n", .{ line_nr, key });
         }
@@ -145,8 +129,6 @@ fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Daemo
         .use_v6 = use_v6,
         .output_path = output_path,
         .verbose = verbose,
-        .pidfile = pidfile,
-        .runtime_dir = runtime_dir,
     };
 }
 
@@ -190,31 +172,6 @@ fn setupSignalHandlers() !void {
         .flags = 0,
     };
     _ = linux.sigaction(.PIPE, &sa_pipe, null);
-}
-
-fn writePidFile(io: std.Io, pidfile: []const u8) !void {
-    const pid = std.os.linux.getpid();
-    var buf: [32]u8 = undefined;
-    const pid_str = try std.fmt.bufPrint(&buf, "{d}", .{pid});
-
-    try fs.writeNewFile(io, pidfile, 0o644, pid_str);
-
-    std.debug.print("[sipd] PID {d} → {s}\n", .{ pid, pidfile });
-}
-
-fn removePidFile(io: std.Io, pidfile: []const u8) void {
-    const cwd = std.Io.Dir.cwd();
-    cwd.deleteFile(io, pidfile) catch |err| {
-        std.debug.print("[sipd] Warnung: PID-Datei konnte nicht gelöscht werden: {any}\n", .{err});
-    };
-}
-
-fn ensureRuntimeDir(io: std.Io, runtime_dir: []const u8) !void {
-    fs.createDirPath(io, runtime_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
-    std.debug.print("[sipd] Runtime-Verzeichnis: {s}\n", .{runtime_dir});
 }
 
 fn promptPassword(allocator: std.mem.Allocator, prompt_text: []const u8) ![]u8 {
@@ -547,9 +504,6 @@ fn runDaemon(
     keys: sip.identity.KeyPair,
 ) !void {
     try setupSignalHandlers();
-    try ensureRuntimeDir(io, config.runtime_dir);
-    try writePidFile(io, config.pidfile);
-    defer removePidFile(io, config.pidfile);
 
     if (config.verbose) {
         var addr_buf: [64]u8 = undefined;

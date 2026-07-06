@@ -37,7 +37,7 @@ const ResolvedMessage = struct {
     }
 };
 
-fn resolveMessage(io: std.Io, allocator: std.mem.Allocator, raw: []const u8) !ResolvedMessage {
+pub fn resolveMessage(io: std.Io, allocator: std.mem.Allocator, raw: []const u8) !ResolvedMessage {
     if (raw.len > 0 and raw[0] == '@') {
         const path = raw[1..];
         std.debug.print("[client] --message beginnt mit '@', lese Datei: \"{s}\"\n", .{path});
@@ -86,7 +86,7 @@ fn readPasswordInteractive(io: std.Io, stdout: *Io.Writer, prompt: []const u8, o
     return out[0..trimmed.len];
 }
 
-fn resolvePassword(
+pub fn resolvePassword(
     io: std.Io,
     stdout: *Io.Writer,
     env_map: *const std.process.Environ.Map,
@@ -317,7 +317,7 @@ pub const ctl = struct {
 
         const local_addr = sip.identity.baseAddress(keys.public);
 
-        const resolved_host = registry.resolve(io, allocator, host) catch |err| switch (err) {
+        const resolved_host = registry.resolve(io, host) catch |err| switch (err) {
             registry.RegistryError.NotFound => {
                 try stdout.print("Fehler: Host/Name '{s}' nicht gefunden.\n", .{host});
                 try stdout.flush();

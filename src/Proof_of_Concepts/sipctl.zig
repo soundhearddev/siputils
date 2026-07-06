@@ -156,6 +156,7 @@ pub fn main(init: std.process.Init) !void {
     const final_cmd = command.?;
 
     if (std.mem.eql(u8, final_cmd, "new")) {
+        utils.helpers.isRoot();
         cmd.ctl.cmdNew(io, stdout, init.environ_map, &args) catch |err| switch (err) {
             cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl new <name>\n"),
             else => return err,
@@ -180,12 +181,14 @@ pub fn main(init: std.process.Init) !void {
         };
         try stdout.flush();
     } else if (std.mem.eql(u8, final_cmd, "rm") or std.mem.eql(u8, final_cmd, "remove") or std.mem.eql(u8, final_cmd, "delete")) {
+        utils.helpers.isRoot();
         cmd.ctl.cmdRemove(io, stdout, &args) catch |err| switch (err) {
             cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl rm <name>\n"),
             else => return err,
         };
         try stdout.flush();
     } else if (std.mem.eql(u8, final_cmd, "passwd")) {
+        utils.helpers.isRoot();
         cmd.ctl.cmdPasswd(io, stdout, init.environ_map, &args) catch |err| switch (err) {
             cmd.CliError.MissingArgument => try stdout.writeAll("Usage: sipctl passwd <name>\n"),
             else => return err,
@@ -196,10 +199,12 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("Send error: {}\n", .{err});
         };
     } else if (std.mem.eql(u8, final_cmd, "trust")) {
+        utils.helpers.isRoot();
         cmd.ctl.cmdTrust(io, stdout, &args) catch |err| {
             std.debug.print("Trust error: {}\n", .{err});
         };
     } else if (std.mem.eql(u8, final_cmd, "untrust")) {
+        utils.helpers.isRoot();
         cmd.ctl.cmdUntrust(io, stdout, &args) catch |err| {
             std.debug.print("Untrust error: {}\n", .{err});
         };

@@ -3,7 +3,7 @@ const std = @import("std");
 pub fn isRoot() void {
     const uid = std.os.linux.getuid();
     if (uid != 0) {
-        std.debug.print("[✗] Dieses Programm muss als root ausgeführt werden (aktuell UID={d}).\n", .{uid});
+        std.debug.print("[✗] Dieses Programm muss als root ausgeführt werden\n", .{});
         std.process.exit(1);
     }
 }

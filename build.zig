@@ -133,31 +133,31 @@ pub fn build(b: *std.Build) void {
         .dependOn(&run_address.step);
 
     // ─────────────────────────────────────────────
-    // sipd
+    // server
     // ─────────────────────────────────────────────
-    const sipd_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/sipd.zig"),
+    const server_mod = b.createModule(.{
+        .root_source_file = b.path("src/Proof_of_Concepts/server.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    sipd_mod.addImport("sip", sip_mod);
-    sipd_mod.addImport("siputils", siputils_mod);
+    server_mod.addImport("sip", sip_mod);
+    server_mod.addImport("siputils", siputils_mod);
 
-    const sipd = b.addExecutable(.{
-        .name = "sipd",
-        .root_module = sipd_mod,
+    const server = b.addExecutable(.{
+        .name = "server",
+        .root_module = server_mod,
     });
 
-    b.installArtifact(sipd);
+    b.installArtifact(server);
 
-    const run_sipd = b.addRunArtifact(sipd);
-    run_sipd.step.dependOn(b.getInstallStep());
+    const run_server = b.addRunArtifact(server);
+    run_server.step.dependOn(b.getInstallStep());
 
-    if (b.args) |args| run_sipd.addArgs(args);
+    if (b.args) |args| run_server.addArgs(args);
 
-    b.step("run-sipd", "Run sipd")
-        .dependOn(&run_sipd.step);
+    b.step("run-server", "Run server")
+        .dependOn(&run_server.step);
 
     // ─────────────────────────────────────────────
     // setdefault

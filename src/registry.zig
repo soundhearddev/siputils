@@ -2,7 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 const fs = @import("filesystem.zig");
 
-pub const REGISTRY_FILE = fs.get_registry_path() ++ "/registry.bin";
+pub const REGISTRY_FILE = fs.get_bin_path() ++ "/registry.bin";
 pub const SUFFIX = ".mesh";
 pub const MESH_ADDR_SIZE: usize = 32;
 
@@ -146,7 +146,7 @@ fn openOrCreate(io: Io) !Io.File {
     const cwd = Io.Dir.cwd();
     return cwd.openFile(io, REGISTRY_FILE, .{ .mode = .read_write }) catch |err| switch (err) {
         error.FileNotFound => blk: {
-            const dir_path = fs.get_registry_path();
+            const dir_path = fs.get_bin_path();
             fs.createDirPath(io, dir_path) catch |dir_err| switch (dir_err) {
                 error.PathAlreadyExists => {},
                 else => return dir_err,
@@ -231,8 +231,6 @@ pub fn register(io: Io, name: []const u8, entry: Entry) !void {
         const rec = try readRecord(io, f, @intCast(i));
         if (rec.isDeleted()) {
             try writeRecord(io, f, @intCast(i), Record.fromEntry(name, entry));
-            header.count += 1;
-            try writeHeader(io, f, header);
             return;
         }
     }
@@ -310,8 +308,7 @@ pub fn compact(io: Io, allocator: std.mem.Allocator) !void {
     try f.setEndPos(io, new_size);
 }
 
-pub fn resolve(io: Io, allocator: std.mem.Allocator, name: []const u8) !ResolveResult {
-    _ = allocator;
+pub fn resolve(io: Io, name: []const u8) !ResolveResult {
     if (name.len == 0) return RegistryError.NotFound;
 
     if (parseIpv6(name) catch null) |ipv6| return .{ .source = .direct_ipv6, .entry = Entry.fromIpv6(ipv6) };
