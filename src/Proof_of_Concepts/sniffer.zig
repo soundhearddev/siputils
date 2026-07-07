@@ -2,8 +2,11 @@ const std = @import("std");
 const linux = std.os.linux;
 const sip = @import("sip");
 
+const utils = @import("siputils");
+const registry = utils.registry;
+
 const MAGIC: u8 = 0xA9;
-const OUTER_HEADER_SIZE: usize = 34;
+const DISCOVERY_HEADER_SIZE: usize = 34;
 const ETH_HLEN: usize = 14;
 const ETH_P_IPV6: u16 = 0x86DD;
 const ETH_P_ALL: u16 = 0x0003;
@@ -29,84 +32,108 @@ const ifreq = extern struct {
     _pad: [20]u8 = [_]u8{0} ** 20,
 };
 
-fn handleFrame(frame: []const u8) void {
-    if (frame.len < ETH_HLEN) return;
+const DiscoveryEvent = struct {
+    ipv6_src: [16]u8,
+    mesh_src: [16]u8,
+    mesh_dst: [16]u8,
+    cmd_byte: u8,
+    cmd: sip.protocol.Command,
+};
+
+fn handleFrame(frame: []const u8) ?DiscoveryEvent {
+    if (frame.len < ETH_HLEN) return null;
 
     const eth_type = (@as(u16, frame[12]) << 8) | frame[13];
-    if (eth_type != ETH_P_IPV6) return;
+    if (eth_type != ETH_P_IPV6) return null;
 
     const ip = frame[ETH_HLEN..];
-    if (ip.len < 40) return;
-    if ((ip[0] >> 4) != 6) return;
-    if (ip[6] != IPPROTO_TCP) return;
+    if (ip.len < 40) return null;
+    if ((ip[0] >> 4) != 6) return null;
+    if (ip[6] != IPPROTO_TCP) return null;
 
     var ipv6_src: [16]u8 = undefined;
     @memcpy(&ipv6_src, ip[8..24]);
 
     const tcp = ip[40..];
-    if (tcp.len < 20) return;
+    if (tcp.len < 20) return null;
     const data_offset = (tcp[12] >> 4) * 4;
-    if (data_offset < 20 or tcp.len < data_offset) return;
+    if (data_offset < 20 or tcp.len < data_offset) return null;
 
     const app = tcp[data_offset..];
-    if (app.len < OUTER_HEADER_SIZE) return;
-    if (app[0] != MAGIC) return;
+    if (app.len < DISCOVERY_HEADER_SIZE) return null;
+    if (app[0] != MAGIC) return null;
 
     const cmd_byte = app[1];
     const cmd = sip.protocol.parseCommand(cmd_byte);
+
+    if (cmd != .discovery) return null;
 
     var mesh_src: [16]u8 = undefined;
     var mesh_dst: [16]u8 = undefined;
     @memcpy(&mesh_src, app[2..18]);
     @memcpy(&mesh_dst, app[18..34]);
 
-    var ip6_buf: [40]u8 = undefined;
-    var ip6_pos: usize = 0;
+    return DiscoveryEvent{
+        .ipv6_src = ipv6_src,
+        .mesh_src = mesh_src,
+        .mesh_dst = mesh_dst,
+        .cmd_byte = cmd_byte,
+        .cmd = cmd,
+    };
+}
+
+fn formatHexAddr(buf: []u8, addr: []const u8) []const u8 {
+    var pos: usize = 0;
+    for (addr, 0..) |b, j| {
+        if (j > 0) {
+            buf[pos] = ':';
+            pos += 1;
+        }
+        const s = std.fmt.bufPrint(buf[pos..], "{x:0>2}", .{b}) catch break;
+        pos += s.len;
+    }
+    return buf[0..pos];
+}
+
+fn formatIpv6Colon(buf: []u8, addr: [16]u8) []const u8 {
+    var pos: usize = 0;
     var i: usize = 0;
     while (i < 16) : (i += 2) {
         if (i > 0) {
-            ip6_buf[ip6_pos] = ':';
-            ip6_pos += 1;
+            buf[pos] = ':';
+            pos += 1;
         }
-        const s = std.fmt.bufPrint(ip6_buf[ip6_pos..], "{x:0>4}", .{(@as(u16, ipv6_src[i]) << 8) | ipv6_src[i + 1]}) catch break;
-        ip6_pos += s.len;
+        const s = std.fmt.bufPrint(buf[pos..], "{x:0>4}", .{(@as(u16, addr[i]) << 8) | addr[i + 1]}) catch break;
+        pos += s.len;
     }
+    return buf[0..pos];
+}
 
+fn logEvent(ev: DiscoveryEvent) void {
+    var ip6_buf: [40]u8 = undefined;
     var msrc_buf: [47]u8 = undefined;
-    var msrc_pos: usize = 0;
-    for (mesh_src, 0..) |b, j| {
-        if (j > 0) {
-            msrc_buf[msrc_pos] = ':';
-            msrc_pos += 1;
-        }
-        const s = std.fmt.bufPrint(msrc_buf[msrc_pos..], "{x:0>2}", .{b}) catch break;
-        msrc_pos += s.len;
-    }
-
     var mdst_buf: [47]u8 = undefined;
-    var mdst_pos: usize = 0;
-    for (mesh_dst, 0..) |b, j| {
-        if (j > 0) {
-            mdst_buf[mdst_pos] = ':';
-            mdst_pos += 1;
-        }
-        const s = std.fmt.bufPrint(mdst_buf[mdst_pos..], "{x:0>2}", .{b}) catch break;
-        mdst_pos += s.len;
-    }
 
     std.debug.print(
-        "MESH PKT magic=0xA9 cmd=0x{x:0>2}({s}) ip6src={s} meshsrc={s} meshdst={s}\n",
+        "MESH DISCOVERY magic=0xA9 cmd=0x{x:0>2}({s}) ip6src={s} meshsrc={s} meshdst={s}\n",
         .{
-            cmd_byte,
-            @tagName(cmd),
-            ip6_buf[0..ip6_pos],
-            msrc_buf[0..msrc_pos],
-            mdst_buf[0..mdst_pos],
+            ev.cmd_byte,
+            @tagName(ev.cmd),
+            formatIpv6Colon(&ip6_buf, ev.ipv6_src),
+            formatHexAddr(&msrc_buf, &ev.mesh_src),
+            formatHexAddr(&mdst_buf, &ev.mesh_dst),
         },
     );
 }
 
+fn toMeshAddr(mesh16: [16]u8) [registry.MESH_ADDR_SIZE]u8 {
+    var out: [registry.MESH_ADDR_SIZE]u8 = [_]u8{0} ** registry.MESH_ADDR_SIZE;
+    @memcpy(out[0..16], &mesh16);
+    return out;
+}
+
 pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const iface: []const u8 = if (args.len >= 2) args[1] else "lo";
 
@@ -149,6 +176,12 @@ pub fn main(init: std.process.Init) !void {
         const n_rc = linux.read(sock, &frame_buf, frame_buf.len);
         const n_signed: isize = @bitCast(n_rc);
         if (n_signed <= 0) continue;
-        handleFrame(frame_buf[0..@intCast(n_signed)]);
+
+        const ev = handleFrame(frame_buf[0..@intCast(n_signed)]) orelse continue;
+        logEvent(ev);
+
+        registry.registerDiscovered(io, ev.ipv6_src, toMeshAddr(ev.mesh_src)) catch |err| {
+            std.debug.print("registry write failed: {}\n", .{err});
+        };
     }
 }

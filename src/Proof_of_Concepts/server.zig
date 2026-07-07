@@ -1,26 +1,14 @@
-// TODO:
-// default user integration!!!!
-// Kommentare in englisch!!
-//
-//
-
 const std = @import("std");
 const sip = @import("sip");
 const utils = @import("siputils");
 
 const keymng = utils.keymng;
 const fs = utils.filesystem;
-// ---------------------------------------------------------------------------
-// Konstanten
-// ---------------------------------------------------------------------------
 
 const CONFIG_PATH: []const u8 = fs.get_config_path();
 const DEFAULT_PORT: u16 = 9443;
 const MAX_FRAME_SIZE: u32 = 256 * 1024 * 1024;
 
-// ---------------------------------------------------------------------------
-// Konfiguration
-// ---------------------------------------------------------------------------
 fn verbosePrint(verbose: bool, comptime fmt: []const u8, args: anytype) void {
     if (verbose) {
         std.debug.print(fmt, args);
@@ -138,41 +126,8 @@ fn parseBool(s: []const u8) !bool {
     return error.InvalidBool;
 }
 
-var should_shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var current_connection: ?sip.synet.Socket = null;
 var connection_mutex: std.Io.Mutex = .init;
-
-fn signalHandler(sig: std.os.linux.SIG) callconv(.c) void {
-    switch (sig) {
-        .TERM, .INT => {
-            std.debug.print("\n[sipd] Signal empfangen, fahre herunter...\n", .{});
-            should_shutdown.store(true, .release);
-        },
-        .HUP => {
-            std.debug.print("[sipd] SIGHUP empfangen\n", .{});
-        },
-        else => {},
-    }
-}
-
-fn setupSignalHandlers() !void {
-    const linux = std.os.linux;
-    var sa = linux.Sigaction{
-        .handler = .{ .handler = signalHandler },
-        .mask = linux.sigemptyset(),
-        .flags = 0,
-    };
-    _ = linux.sigaction(.TERM, &sa, null);
-    _ = linux.sigaction(.INT, &sa, null);
-    _ = linux.sigaction(.HUP, &sa, null);
-
-    var sa_pipe = linux.Sigaction{
-        .handler = .{ .handler = linux.SIG.IGN },
-        .mask = linux.sigemptyset(),
-        .flags = 0,
-    };
-    _ = linux.sigaction(.PIPE, &sa_pipe, null);
-}
 
 fn promptPassword(allocator: std.mem.Allocator, prompt_text: []const u8) ![]u8 {
     std.debug.print("{s}: ", .{prompt_text});
@@ -251,10 +206,6 @@ fn loadOrCreateIdentity(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Framed I/O
-// ---------------------------------------------------------------------------
-
 fn sendFramed(sock: sip.synet.Socket, data: []const u8, verbose: bool) !void {
     verbosePrint(verbose, "[sipd] sendFramed: {d} Byte\n", .{data.len});
 
@@ -281,10 +232,6 @@ fn recvFramed(allocator: std.mem.Allocator, sock: sip.synet.Socket, verbose: boo
     try sip.synet.recvExact(sock, buf);
     return buf;
 }
-
-// ---------------------------------------------------------------------------
-// Schlüsselaustausch
-// ---------------------------------------------------------------------------
 
 fn performKeyExchange(
     io: std.Io,
@@ -365,10 +312,6 @@ fn performKeyExchange(
     return session;
 }
 
-// ---------------------------------------------------------------------------
-// Verbindungshandling
-// ---------------------------------------------------------------------------
-
 fn handleConnection(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -436,22 +379,6 @@ fn handleConnection(
                     .complete => |paths| break :blk paths,
                 }
 
-                while (!should_shutdown.load(.acquire)) {
-                    const pkt = sip.translation.readInboundPacket(conn, allocator, rx_key) catch |err| {
-                        if (err == error.ConnectionClosed or err == error.SocketError) {
-                            std.debug.print("[sipd] Verbindung geschlossen\n", .{});
-                            break :blk &[_][]u8{};
-                        }
-                        std.debug.print("[sipd] Lesefehler: {any}\n", .{err});
-                        return err;
-                    };
-                    defer sip.translation.freeInboundPacket(allocator, pkt);
-
-                    switch (try reassembler.feed(pkt.parsed)) {
-                        .pending => continue,
-                        .complete => |paths| break :blk paths,
-                    }
-                }
                 break :blk &[_][]u8{};
             };
 
@@ -493,18 +420,10 @@ fn streamFileAndDelete(io: std.Io, allocator: std.mem.Allocator, dest: anytype, 
     try tmp_dir.deleteFile(io, relative_to_tmp);
 }
 
-// ---------------------------------------------------------------------------
-// Daemon-Hauptschleife
-// ---------------------------------------------------------------------------
-
 fn runDaemon(
-    io: std.Io,
-    allocator: std.mem.Allocator,
     config: DaemonConfig,
     keys: sip.identity.KeyPair,
 ) !void {
-    try setupSignalHandlers();
-
     if (config.verbose) {
         var addr_buf: [64]u8 = undefined;
         const addr = sip.identity.baseAddress(keys.public);
@@ -557,20 +476,6 @@ fn runDaemon(
     try sip.synet.listen(listener, 1);
     verbosePrint(config.verbose, "[sipd] lauscht auf Port {d}\n", .{config.port});
 
-    while (!should_shutdown.load(.acquire)) {
-        std.debug.print("[sipd] warte auf Verbindung...\n", .{});
-
-        const conn = sip.synet.accept(listener) catch |err| {
-            if (should_shutdown.load(.acquire)) break;
-            return err;
-        };
-
-        std.debug.print("[sipd] Verbindung angenommen\n", .{});
-        handleConnection(io, allocator, config, keys, conn) catch |err| {
-            std.debug.print("[sipd] Fehler: {any}\n", .{err});
-        };
-    }
-
     std.debug.print("[sipd] heruntergefahren\n", .{});
 }
 
@@ -586,9 +491,6 @@ const ArgIter = struct {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Einstiegspunkt
-// ---------------------------------------------------------------------------
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
@@ -619,5 +521,5 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    try runDaemon(io, gpa, config, keys);
+    try runDaemon(config, keys);
 }

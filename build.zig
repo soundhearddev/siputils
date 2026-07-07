@@ -11,7 +11,6 @@ pub fn build(b: *std.Build) void {
 
     const sip_mod = sip_dep.module("sip");
 
-    // Referenz behalten, nicht verwerfen!
     const siputils_mod = b.addModule("siputils", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -48,6 +47,34 @@ pub fn build(b: *std.Build) void {
 
     b.step("run-sipctl", "Run sipctl")
         .dependOn(&run_sipctl.step);
+
+    // ─────────────────────────────────────────────
+    // sipreq
+    // ─────────────────────────────────────────────
+
+    const sipreq_mod = b.createModule(.{
+        .root_source_file = b.path("src/Proof_of_Concepts/sipreq.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    sipreq_mod.addImport("sip", sip_mod);
+    sipreq_mod.addImport("siputils", siputils_mod);
+
+    const sipreq = b.addExecutable(.{
+        .name = "sipreq",
+        .root_module = sipreq_mod,
+    });
+
+    b.installArtifact(sipreq);
+
+    const run_sipreq = b.addRunArtifact(sipreq);
+    run_sipreq.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| run_sipctl.addArgs(args);
+
+    b.step("run-sipreq", "Run sipreq")
+        .dependOn(&run_sipreq.step);
 
     // ─────────────────────────────────────────────
     // header_test
@@ -104,6 +131,34 @@ pub fn build(b: *std.Build) void {
 
     b.step("run-discovery-test", "Run discovery_test")
         .dependOn(&run_discovery_test.step);
+
+    // ─────────────────────────────────────────────
+    // registry_viewer
+    // ─────────────────────────────────────────────
+
+    const registry_viewer_mod = b.createModule(.{
+        .root_source_file = b.path("src/Proof_of_Concepts/registry_viewer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    registry_viewer_mod.addImport("sip", sip_mod);
+    registry_viewer_mod.addImport("siputils", siputils_mod);
+
+    const registry_viewer = b.addExecutable(.{
+        .name = "registry_viewer",
+        .root_module = registry_viewer_mod,
+    });
+
+    b.installArtifact(registry_viewer);
+
+    const run_registry_viewer = b.addRunArtifact(registry_viewer);
+    run_registry_viewer.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| run_registry_viewer.addArgs(args);
+
+    b.step("run-registry-viewer", "Run dregistry_viewer")
+        .dependOn(&run_registry_viewer.step);
 
     // ─────────────────────────────────────────────
     // address
