@@ -4,11 +4,6 @@ const fs = @import("filesystem.zig");
 
 pub const REGISTRY_FILE = fs.get_bin_path() ++ "/registry.bin";
 pub const SUFFIX = ".mesh";
-// SIP-Adressen sind 16 Byte (siehe identity.baseAddress / Discovery-Paket-
-// format in header.zig). Vorher stand hier 32 und die oberen 16 Byte waren
-// überall im Code stumpfes Null-Padding (siehe toMeshAddr im Sniffer und
-// der analoge Code in cmdhandler.zig) -- reine Verschwendung, die auch die
-// Lesbarkeit der Registry-Anzeige unnötig aufgebläht hat.
 pub const MESH_ADDR_SIZE: usize = 16;
 pub const UNREG_PREFIX = "unreg:";
 
@@ -603,7 +598,7 @@ pub fn formatMeshAddr(buf: *[MESH_ADDR_SIZE * 2]u8, addr: [MESH_ADDR_SIZE]u8) []
     return buf[0..];
 }
 
-pub fn formatMeshAddrGrouped(buf: *[MESH_ADDR_SIZE * 2 + 3]u8, addr: [MESH_ADDR_SIZE]u8) []const u8 {
+pub fn formatMeshAddrGrouped(buf: *[MESH_ADDR_SIZE * 2 + 7]u8, addr: [MESH_ADDR_SIZE]u8) []const u8 {
     var pos: usize = 0;
     var i: usize = 0;
     while (i < MESH_ADDR_SIZE) : (i += 4) {
@@ -733,11 +728,11 @@ test "formatIpv6 roundtrip mit parseIpv6" {
 }
 
 test "formatMeshAddrGrouped gruppiert alle 4 Bytes mit ':'" {
-    var buf: [MESH_ADDR_SIZE * 2 + 3]u8 = undefined;
+    var buf: [MESH_ADDR_SIZE * 2 + 7]u8 = undefined;
     var addr: [MESH_ADDR_SIZE]u8 = undefined;
     for (0..MESH_ADDR_SIZE) |i| addr[i] = @intCast(i);
     const s = formatMeshAddrGrouped(&buf, addr);
 
-    try std.testing.expectEqual(@as(usize, 35), s.len);
+    try std.testing.expectEqual(@as(usize, 71), s.len);
     try std.testing.expect(std.mem.startsWith(u8, s, "00010203:"));
 }

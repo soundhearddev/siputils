@@ -44,7 +44,7 @@ pub fn main(init: std.process.Init) !void {
                 var addr_buf: [40]u8 = undefined;
                 const addr_str = registry.formatIpv6(&addr_buf, entry.addr[0..16].*);
 
-                var mesh_buf: [registry.MESH_ADDR_SIZE * 2 + 3]u8 = undefined;
+                var mesh_buf: [registry.MESH_ADDR_SIZE * 2 + 7]u8 = undefined;
                 const mesh_str = registry.formatMeshAddrGrouped(&mesh_buf, entry.mesh_addr);
 
                 try out.print("  {s}\n", .{entry.name()});
