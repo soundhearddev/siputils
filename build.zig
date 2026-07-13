@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) void {
     // ─────────────────────────────────────────────
 
     const sipreq_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/sipreq.zig"),
+        .root_source_file = b.path("src/template/sipreq.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -81,7 +81,7 @@ pub fn build(b: *std.Build) void {
     // ─────────────────────────────────────────────
 
     const header_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/header_test.zig"),
+        .root_source_file = b.path("src/template/header_test.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -109,7 +109,7 @@ pub fn build(b: *std.Build) void {
     // ─────────────────────────────────────────────
 
     const discovery_test_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/discovery_test.zig"),
+        .root_source_file = b.path("src/template/discovery_test.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -137,7 +137,7 @@ pub fn build(b: *std.Build) void {
     // ─────────────────────────────────────────────
 
     const registry_viewer_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/registry_viewer.zig"),
+        .root_source_file = b.path("src/template/registry_viewer.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -164,7 +164,7 @@ pub fn build(b: *std.Build) void {
     // address
     // ─────────────────────────────────────────────
     const address_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/address.zig"),
+        .root_source_file = b.path("src/template/address.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -191,7 +191,7 @@ pub fn build(b: *std.Build) void {
     // server
     // ─────────────────────────────────────────────
     const server_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/server.zig"),
+        .root_source_file = b.path("src/template/server.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -218,7 +218,7 @@ pub fn build(b: *std.Build) void {
     // setdefault
     // ─────────────────────────────────────────────
     const setdefault_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/setdefault.zig"),
+        .root_source_file = b.path("src/template/setdefault.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -258,7 +258,7 @@ pub fn build(b: *std.Build) void {
     // ─────────────────────────────────────────────
 
     const discover_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/sniffer.zig"),
+        .root_source_file = b.path("src/template/sniffer.zig"),
         .target = target,
         .optimize = optimize,
     });
