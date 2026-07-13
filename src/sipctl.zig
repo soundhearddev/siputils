@@ -197,16 +197,19 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, final_cmd, "send")) {
         cmd.ctl.cmdSend(io, gpa, stdout, init.environ_map, &args) catch |err| {
             std.debug.print("Send error: {}\n", .{err});
+            std.debug.print("Usage: sipctl send <identity> <host> [--port PORT] <message>\n", .{});
         };
     } else if (std.mem.eql(u8, final_cmd, "trust")) {
         utils.helpers.isRoot();
         cmd.ctl.cmdTrust(io, stdout, &args) catch |err| {
             std.debug.print("Trust error: {}\n", .{err});
+            std.debug.print("Verwendung: sipctl trust <addr_hex> <label>\n", .{});
         };
     } else if (std.mem.eql(u8, final_cmd, "untrust")) {
         utils.helpers.isRoot();
         cmd.ctl.cmdUntrust(io, stdout, &args) catch |err| {
             std.debug.print("Untrust error: {}\n", .{err});
+            std.debug.print("Usage: sipctl untrust <addr_hex>\n", .{});
         };
     } else if (std.mem.eql(u8, final_cmd, "trust-list")) {
         cmd.ctl.cmdTrustList(io, stdout) catch |err| {

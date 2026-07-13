@@ -31,7 +31,7 @@ pub fn formatSipAddress(buf: []u8, name: []const u8, base: [16]u8) ![]const u8 {
 pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !DaemonConfig {
     const cwd = std.Io.Dir.cwd();
     const raw = cwd.readFileAlloc(io, path, allocator, .unlimited) catch |err| {
-        std.debug.print("[sipd] Fehler: Kann Konfiguration nicht öffnen: {s} ({any})\n", .{ path, err });
+        std.debug.print("[sipd] Error: Cannot open configuration: {s} ({any})\n", .{ path, err });
         return err;
     };
     defer allocator.free(raw);
@@ -59,7 +59,7 @@ pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !D
         if (line.len == 0 or line[0] == '#') continue;
 
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse {
-            std.debug.print("[sipd] Warnung: Zeile {d} ignoriert (kein '='): {s}\n", .{ line_nr, line });
+            std.debug.print("[sipd] Warning: Ignoring line {d} (no '='): {s}\n", .{ line_nr, line });
             continue;
         };
 
@@ -74,12 +74,12 @@ pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !D
             host = try allocator.dupe(u8, val);
         } else if (std.mem.eql(u8, key, "port")) {
             port = std.fmt.parseInt(u16, val, 10) catch {
-                std.debug.print("[sipd] Fehler: Ungültiger Port in Zeile {d}: {s}\n", .{ line_nr, val });
+                std.debug.print("[sipd] Error: Invalid port on line {d}: {s}\n", .{ line_nr, val });
                 return error.InvalidPort;
             };
         } else if (std.mem.eql(u8, key, "use_v6")) {
             use_v6 = parseBool(val) catch {
-                std.debug.print("[sipd] Fehler: Ungültiger Bool in Zeile {d}: {s}\n", .{ line_nr, val });
+                std.debug.print("[sipd] Error: Invalid boolean on line {d}: {s}\n", .{ line_nr, val });
                 return error.InvalidBool;
             };
         } else if (std.mem.eql(u8, key, "output_path")) {
@@ -87,16 +87,16 @@ pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !D
             output_path = try allocator.dupe(u8, val);
         } else if (std.mem.eql(u8, key, "verbose")) {
             verbose = parseBool(val) catch {
-                std.debug.print("[sipd] Fehler: Ungültiger Bool in Zeile {d}: {s}\n", .{ line_nr, val });
+                std.debug.print("[sipd] Error: Invalid boolean on line {d}: {s}\n", .{ line_nr, val });
                 return error.InvalidBool;
             };
         } else {
-            std.debug.print("[sipd] Warnung: Unbekannter Schlüssel in Zeile {d}: {s}\n", .{ line_nr, key });
+            std.debug.print("[sipd] Warning: Unknown key on line {d}: {s}\n", .{ line_nr, key });
         }
     }
 
     const resolved_identity = identity_name orelse {
-        std.debug.print("[sipd] Fehler: 'identity_name' fehlt in {s}\n", .{path});
+        std.debug.print("[sipd] Error: 'identity_name' missing in {s}\n", .{path});
         return error.MissingIdentity;
     };
 
@@ -119,38 +119,6 @@ pub fn parseBool(s: []const u8) !bool {
 pub var should_shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var current_connection: ?sip.synet.Socket = null;
 var connection_mutex: std.Io.Mutex = .init;
-
-fn signalHandler(sig: std.os.linux.SIG) callconv(.c) void {
-    switch (sig) {
-        .TERM, .INT => {
-            std.debug.print("\n[sipd] Signal empfangen, fahre herunter...\n", .{});
-            should_shutdown.store(true, .release);
-        },
-        .HUP => {
-            std.debug.print("[sipd] SIGHUP empfangen\n", .{});
-        },
-        else => {},
-    }
-}
-
-pub fn setupSignalHandlers() !void {
-    const linux = std.os.linux;
-    var sa = linux.Sigaction{
-        .handler = .{ .handler = signalHandler },
-        .mask = linux.sigemptyset(),
-        .flags = 0,
-    };
-    _ = linux.sigaction(.TERM, &sa, null);
-    _ = linux.sigaction(.INT, &sa, null);
-    _ = linux.sigaction(.HUP, &sa, null);
-
-    var sa_pipe = linux.Sigaction{
-        .handler = .{ .handler = linux.SIG.IGN },
-        .mask = linux.sigemptyset(),
-        .flags = 0,
-    };
-    _ = linux.sigaction(.PIPE, &sa_pipe, null);
-}
 
 pub fn setCurrentConnection(io: std.Io, conn: sip.synet.Socket) void {
     connection_mutex.lockUncancelable(io);
@@ -177,23 +145,21 @@ pub fn loadOrCreateIdentity(
     var pw_buf: [256]u8 = undefined;
 
     if (keymng.identityExists(io, identity_name)) {
-        std.debug.print("[sipd] '{s}' gefunden\n", .{identity_name});
-
+        std.debug.print("[sipd] '{s}' found\n", .{identity_name});
         const password = try cmd.resolvePassword(io, stdout_writer, init.environ_map, .{ .env_name = "SIPD_PASSWORD" }, &pw_buf, false);
 
         return keymng.loadIdentity(io, identity_name, password);
     } else {
-        std.debug.print("[sipd] '{s}' nicht gefunden\n", .{identity_name});
-
+        std.debug.print("[sipd] '{s}' not found\n", .{identity_name});
         if (!keymng.validName(identity_name)) {
-            std.debug.print("[sipd] Ungültiger Identitätsname\n", .{});
+            std.debug.print("[sipd] Invalid identity name\n", .{});
             return error.InvalidIdentityName;
         }
 
         const password = try cmd.resolvePassword(io, stdout_writer, init.environ_map, .{ .env_name = "SIPD_PASSWORD" }, &pw_buf, true);
 
         return keymng.createIdentity(io, identity_name, password) catch |err| {
-            std.debug.print("[sipd] Fehler beim Erstellen der Identität: {any}\n", .{err});
+            std.debug.print("[sipd] Error creating identity: {any}\n", .{err});
             return err;
         };
     }
@@ -212,7 +178,7 @@ pub fn createListener(config: DaemonConfig) !sip.synet.Socket {
             if (std.mem.eql(u8, h, "::1")) {
                 ip_bytes[15] = 1;
             } else if (std.mem.eql(u8, h, "::")) {} else {
-                std.debug.print("[sipd] Fehler: IPv6-Parsing für '{s}' nicht implementiert (nutze '::1' oder '::')\n", .{h});
+                std.debug.print("[sipd] Error: IPv6 parsing for '{s}' not implemented (use '::1' or '::')\n", .{h});
                 return error.UnsupportedIPv6Format;
             }
         }
@@ -226,12 +192,12 @@ pub fn createListener(config: DaemonConfig) !sip.synet.Socket {
             while (it.next()) |part| : (i += 1) {
                 if (i >= 4) return error.InvalidAddress;
                 ip_bytes[i] = std.fmt.parseInt(u8, part, 10) catch {
-                    std.debug.print("[sipd] Fehler: Ungültige IPv4-Komponente '{s}' in '{s}'\n", .{ part, h });
+                    std.debug.print("[sipd] Error: Invalid IPv4 component '{s}' in '{s}'\n", .{ part, h });
                     return error.InvalidAddress;
                 };
             }
             if (i != 4) {
-                std.debug.print("[sipd] Fehler: IPv4-Adresse '{s}' hat keine 4 Segmente\n", .{h});
+                std.debug.print("[sipd] Error: IPv4 address '{s}' does not have 4 segments\n", .{h});
                 return error.InvalidAddress;
             }
         }

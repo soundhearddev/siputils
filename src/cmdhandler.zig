@@ -40,12 +40,12 @@ const ResolvedMessage = struct {
 pub fn resolveMessage(io: std.Io, allocator: std.mem.Allocator, raw: []const u8) !ResolvedMessage {
     if (raw.len > 0 and raw[0] == '@') {
         const path = raw[1..];
-        std.debug.print("[client] --message beginnt mit '@', lese Datei: \"{s}\"\n", .{path});
+        std.debug.print("[debug] --message starts with '@', reading file: \"{s}\"\n", .{path});
         const data = try fs.readFileBytes(io, allocator, path);
         std.debug.print("[debug] returning resolved Message\n", .{});
         return ResolvedMessage{ .bytes = data, .owned = true };
     }
-    std.debug.print("[client] --message wird als roher Text behandelt ({d} Byte)\n", .{raw.len});
+    std.debug.print("[client] --message is treated as raw text ({d} bytes)\n", .{raw.len});
     return ResolvedMessage{ .bytes = raw, .owned = false };
 }
 
@@ -105,10 +105,10 @@ pub fn resolvePassword(
         return buf[0..env_pw.len];
     }
 
-    const pw = try readPasswordInteractive(io, stdout, "Passwort: ", buf);
+    const pw = try readPasswordInteractive(io, stdout, "Password: ", buf);
     if (confirm) {
         var confirm_buf: [256]u8 = undefined;
-        const pw2 = try readPasswordInteractive(io, stdout, "Passwort bestätigen: ", &confirm_buf);
+        const pw2 = try readPasswordInteractive(io, stdout, "Confirm password: ", &confirm_buf);
         if (!std.mem.eql(u8, pw, pw2)) return error.PasswordMismatch;
     }
     return pw;
@@ -118,7 +118,7 @@ pub const ctl = struct {
     pub fn cmdNew(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Map, args: *ArgIter) !void {
         const name = args.next() orelse return CliError.MissingArgument;
         if (!keymng.validName(name)) {
-            try stdout.writeAll("Fehler: Ungültiger Name (nur a-z, A-Z, 0-9, -, _, .)\n");
+            try stdout.writeAll("Error: Invalid name (only a-z, A-Z, 0-9, -, _, .)\n");
             try stdout.flush();
             return;
         }
@@ -128,12 +128,12 @@ pub const ctl = struct {
 
         const kp = keymng.createIdentity(io, name, password) catch |err| switch (err) {
             keymng.KeystoreError.IdentityAlreadyExists => {
-                try stdout.print("Fehler: Identität '{s}' existiert bereits.\n", .{name});
+                try stdout.print("Error: Identity '{s}' already exists.\n", .{name});
                 try stdout.flush();
                 return;
             },
             error.AccessDenied => {
-                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl new <name>\n");
+                try stdout.writeAll("Error: Sudo required.\n");
                 try stdout.flush();
                 return;
             },
@@ -144,7 +144,7 @@ pub const ctl = struct {
         var addr_buf: [80]u8 = undefined;
         const addr = try sip.identity.formatSipAddress(&addr_buf, name, base);
 
-        try stdout.print("[+] Identität '{s}' erstellt\n", .{name});
+        try stdout.print("[+] Identity '{s}' created\n", .{name});
         try stdout.print("    sip-address: {s}\n", .{addr});
         try stdout.print("    public-key : {x}\n", .{kp.public});
         try stdout.flush();
@@ -155,7 +155,7 @@ pub const ctl = struct {
 
         const pub_bytes = keymng.loadPublicOnly(io, name) catch |err| switch (err) {
             keymng.KeystoreError.IdentityNotFound => {
-                try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
+                try stdout.print("Error: Identity '{s}' not found.\n", .{name});
                 try stdout.flush();
                 return;
             },
@@ -180,7 +180,7 @@ pub const ctl = struct {
         const name = args.next() orelse return CliError.MissingArgument;
         const pub_bytes = keymng.loadPublicOnly(io, name) catch |err| switch (err) {
             keymng.KeystoreError.IdentityNotFound => {
-                try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
+                try stdout.print("Error: Identity '{s}' not found.\n", .{name});
                 try stdout.flush();
                 return;
             },
@@ -200,7 +200,7 @@ pub const ctl = struct {
         const name = args.next() orelse return CliError.MissingArgument;
         const pub_bytes = keymng.loadPublicOnly(io, name) catch |err| switch (err) {
             keymng.KeystoreError.IdentityNotFound => {
-                try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
+                try stdout.print("Error: Identity '{s}' not found.\n", .{name});
                 try stdout.flush();
                 return;
             },
@@ -218,66 +218,64 @@ pub const ctl = struct {
 
         keymng.deleteIdentity(io, name) catch |err| switch (err) {
             keymng.KeystoreError.IdentityNotFound => {
-                try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
+                try stdout.print("Error: Identity '{s}' not found.\n", .{name});
                 try stdout.flush();
                 return;
             },
             error.AccessDenied => {
-                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl rm <name>\n");
+                try stdout.writeAll("Error: Sudo required.\n");
                 try stdout.flush();
                 return;
             },
             else => return err,
         };
 
-        try stdout.print("[-] Identität '{s}' gelöscht\n", .{name});
+        try stdout.print("[-] Identity '{s}' deleted\n", .{name});
         try stdout.flush();
     }
 
     pub fn cmdPasswd(io: std.Io, stdout: *Io.Writer, env_map: *const std.process.Environ.Map, args: *ArgIter) !void {
         const name = args.next() orelse return CliError.MissingArgument;
 
-        try stdout.writeAll("Aktuelles ");
+        try stdout.writeAll("Current ");
         try stdout.flush();
         var old_pw_buf: [256]u8 = undefined;
         const old_pw = try resolvePassword(io, stdout, env_map, .{}, &old_pw_buf, false);
 
-        try stdout.writeAll("Neues ");
+        try stdout.writeAll("New ");
         try stdout.flush();
         var new_pw_buf: [256]u8 = undefined;
         const new_pw = try resolvePassword(io, stdout, env_map, .{}, &new_pw_buf, true);
 
         _ = keymng.changePassword(io, name, old_pw, new_pw) catch |err| switch (err) {
             keymng.KeystoreError.IdentityNotFound => {
-                try stdout.print("Fehler: Identität '{s}' nicht gefunden.\n", .{name});
+                try stdout.print("Error: Identity '{s}' not found.\n", .{name});
                 try stdout.flush();
                 return;
             },
             sip.identity.SipError.DecryptionFailed => {
-                try stdout.writeAll("Fehler: Falsches Passwort.\n");
+                try stdout.writeAll("Error: Wrong password.\n");
                 try stdout.flush();
                 return;
             },
             error.AccessDenied => {
-                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl passwd <name>\n");
+                try stdout.writeAll("Error: Sudo required.\n");
                 try stdout.flush();
                 return;
             },
             else => return err,
         };
 
-        try stdout.print("[+] Passwort für '{s}' geändert\n", .{name});
+        try stdout.print("[+] Password for '{s}' changed\n", .{name});
         try stdout.flush();
     }
     pub fn cmdSend(io: std.Io, allocator: std.mem.Allocator, stdout: *Io.Writer, env_map: *const std.process.Environ.Map, args: *ArgIter) !void {
         const identity_name = args.next() orelse {
-            try stdout.writeAll("Verwendung: sipctl send <identity> <host> [--port PORT] <message>\n");
             try stdout.flush();
             return;
         };
 
         const host = args.next() orelse {
-            try stdout.writeAll("Verwendung: sipctl send <identity> <host> [--port PORT] <message>\n");
             try stdout.flush();
             return;
         };
@@ -289,7 +287,7 @@ pub const ctl = struct {
             if (std.mem.eql(u8, arg, "--port")) {
                 if (args.next()) |port_str| {
                     port = std.fmt.parseInt(u16, port_str, 10) catch {
-                        try stdout.writeAll("Fehler: Ungültiger Port\n");
+                        try stdout.writeAll("Error: Invalid port\n");
                         try stdout.flush();
                         return;
                     };
@@ -301,7 +299,7 @@ pub const ctl = struct {
         }
 
         if (message == null) {
-            try stdout.writeAll("Fehler: Keine Nachricht angegeben\n");
+            try stdout.writeAll("Error: No message provided\n");
             try stdout.flush();
             return;
         }
@@ -310,7 +308,7 @@ pub const ctl = struct {
         const password = try resolvePassword(io, stdout, env_map, .{}, &pw_buf, false);
 
         const keys = keymng.loadIdentity(io, identity_name, password) catch |err| {
-            try stdout.print("Fehler beim Laden der Identität: {}\n", .{err});
+            try stdout.print("Error loading identity: {}\n", .{err});
             try stdout.flush();
             return;
         };
@@ -319,12 +317,12 @@ pub const ctl = struct {
 
         const resolved_host = registry.resolve(io, host) catch |err| switch (err) {
             registry.RegistryError.NotFound => {
-                try stdout.print("Fehler: Host/Name '{s}' nicht gefunden.\n", .{host});
+                try stdout.print("Error: Host/name '{s}' not found.\n", .{host});
                 try stdout.flush();
                 return;
             },
             registry.RegistryError.Ambiguous => {
-                try stdout.print("Fehler: Name '{s}' ist mehrdeutig (mehrere Treffer).\n", .{host});
+                try stdout.print("Error: Name '{s}' is ambiguous (multiple matches).\n", .{host});
                 try stdout.flush();
                 return;
             },
@@ -339,7 +337,7 @@ pub const ctl = struct {
             try sip.synet.createTcpSocket();
         defer sip.synet.close(sock);
 
-        std.debug.print("[sipctl] verbinde zu {s}:{d}...\n", .{ host, port });
+        std.debug.print("[debug] connecting to {s}:{d}...\n", .{ host, port });
 
         switch (resolved_host.entry.kind) {
             .ipv6 => {
@@ -352,12 +350,11 @@ pub const ctl = struct {
                 try sip.synet.connect(sock, &addr4);
             },
             .mesh => {
-                try stdout.writeAll("Fehler: Mesh-Adressen werden für 'send' noch nicht unterstützt.\n");
+                try stdout.writeAll("Error: Mesh addresses are not supported for 'send' yet.\n");
                 try stdout.flush();
                 return;
             },
         }
-        std.debug.print("[sipctl] TCP-Verbindung hergestellt\n", .{});
 
         var disc_buf: [sip.header.OUTER_HEADER_SIZE]u8 = undefined;
         var src: [16]u8 = undefined;
@@ -373,7 +370,7 @@ pub const ctl = struct {
 
         var peer_address: [16]u8 = undefined;
         @memcpy(&peer_address, reply_buf[2..18]);
-        std.debug.print("[sipctl] Peer SIP-Adresse: {x}\n", .{peer_address});
+        std.debug.print("[debug] Peer SIP address: {x}\n", .{peer_address});
 
         if (resolved_host.source == .registry or resolved_host.source == .registry_partial) {
             var mesh_buf: [registry.MESH_ADDR_SIZE]u8 = [_]u8{0} ** registry.MESH_ADDR_SIZE;
@@ -389,8 +386,7 @@ pub const ctl = struct {
 
         var session = try sip.handshake.performKeyExchange(io, allocator, sock, keys, local_addr, true, peer_address);
         defer session.deinit();
-        std.debug.print("[sipctl] Schlüsselaustausch abgeschlossen.\n", .{});
-
+        std.debug.print("[debug] Key exchange completed.\n", .{});
         const key = session.tx;
 
         const resolved = try resolveMessage(io, allocator, message.?);
@@ -412,82 +408,79 @@ pub const ctl = struct {
         defer packet_list.deinit();
 
         for (packet_list.items, 0..) |wire_packet, idx| {
-            std.debug.print("[sipctl] Sende Paket {d}/{d} (Größe: {d} Bytes)...\n", .{ idx + 1, packet_list.items.len, wire_packet.len });
+            std.debug.print("[debug] Sending packet {d}/{d} (size: {d} bytes)...\n", .{ idx + 1, packet_list.items.len, wire_packet.len });
             try sip.synet.sendAll(sock, wire_packet);
         }
 
-        std.debug.print("[sipctl] Transfer abgeschlossen. Alle Pakete gesendet.\n", .{});
+        std.debug.print("[debug] Transfer completed. All packets sent.\n", .{});
     }
 
     pub fn cmdTrust(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
         const addr_hex = args.next() orelse {
-            try stdout.writeAll("Verwendung: sipctl trust <addr_hex> <label>\n");
             try stdout.flush();
             return;
         };
         const label = args.next() orelse {
-            try stdout.writeAll("Verwendung: sipctl trust <addr_hex> <label>\n");
             try stdout.flush();
             return;
         };
 
         const addr = keymng.parseAddrHex(addr_hex) catch {
-            try stdout.writeAll("Fehler: Ungültige Adresse (erwartet 32 Hex-Zeichen).\n");
+            try stdout.writeAll("Error: Invalid address (expected 32 hex characters).\n");
             try stdout.flush();
             return;
         };
 
         keymng.trustPeer(io, addr, label) catch |err| switch (err) {
             keymng.TrustError.AlreadyTrusted => {
-                try stdout.print("Fehler: Adresse ist bereits vertrauenswürdig ('{s}' erneut nötig? -> zuerst untrust).\n", .{label});
+                try stdout.print("Error: Address is already trusted.\n", .{});
                 try stdout.flush();
                 return;
             },
             keymng.TrustError.LabelTooLong => {
-                try stdout.writeAll("Fehler: Label zu lang.\n");
+                try stdout.writeAll("Error: Label too long.\n");
                 try stdout.flush();
                 return;
             },
             error.AccessDenied => {
-                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl trust <addr_hex> <label>\n");
+                try stdout.writeAll("Error: Sudo required.\n");
                 try stdout.flush();
                 return;
             },
             else => return err,
         };
 
-        try stdout.print("[+] Peer vertraut: {s} ({x})\n", .{ label, addr });
+        try stdout.print("[+] Peer trusted: {s} ({x})\n", .{ label, addr });
         try stdout.flush();
     }
 
     pub fn cmdUntrust(io: std.Io, stdout: *Io.Writer, args: *ArgIter) !void {
         const addr_hex = args.next() orelse {
-            try stdout.writeAll("Verwendung: sipctl untrust <addr_hex>\n");
             try stdout.flush();
             return;
         };
 
         const addr = keymng.parseAddrHex(addr_hex) catch {
-            try stdout.writeAll("Fehler: Ungültige Adresse (erwartet 32 Hex-Zeichen).\n");
+            try stdout.writeAll("Error: Invalid address (expected 32 hex characters).\n");
             try stdout.flush();
             return;
         };
 
         keymng.untrustPeer(io, addr) catch |err| switch (err) {
             keymng.TrustError.NotFound => {
-                try stdout.writeAll("Fehler: Diese Adresse steht nicht auf der Trust-Liste.\n");
+                try stdout.writeAll("Error: This address is not on the trust list.\n");
                 try stdout.flush();
                 return;
             },
             error.AccessDenied => {
-                try stdout.writeAll("Fehler: Sudo erforderlich. Versuche: sudo sipctl untrust <addr_hex>\n");
+                try stdout.writeAll("Error: Sudo required.\n");
                 try stdout.flush();
                 return;
             },
             else => return err,
         };
 
-        try stdout.print("[-] Peer entfernt: {x}\n", .{addr});
+        try stdout.print("[-] Peer removed: {x}\n", .{addr});
         try stdout.flush();
     }
 

@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
     // ─────────────────────────────────────────────
 
     const sipctl_mod = b.createModule(.{
-        .root_source_file = b.path("src/Proof_of_Concepts/sipctl.zig"),
+        .root_source_file = b.path("src/sipctl.zig"),
         .target = target,
         .optimize = optimize,
     });

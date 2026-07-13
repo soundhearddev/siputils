@@ -3,7 +3,7 @@ const std = @import("std");
 pub fn isRoot() void {
     const uid = std.os.linux.getuid();
     if (uid != 0) {
-        std.debug.print("[✗] Dieses Programm muss als root ausgeführt werden\n", .{});
+        std.debug.print("[✗] This program must be run as root\n", .{});
         std.process.exit(1);
     }
 }
@@ -20,8 +20,7 @@ pub fn ensureDummyIface(gpa: std.mem.Allocator, io: std.Io, name: []const u8) ![
     defer gpa.free(check.stderr);
 
     if (check.term.exited != 0) {
-        std.debug.print("[i] Dummy-Interface '{s}' nicht gefunden. Erstelle es...\n", .{name});
-
+        std.debug.print("[i] Dummy interface '{s}' not found. Creating it...\n", .{name});
         const add = try std.process.run(gpa, io, .{
             .argv = &.{ "ip", "link", "add", name, "type", "dummy" },
         });
