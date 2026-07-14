@@ -24,10 +24,6 @@ pub const DaemonConfig = struct {
     verbose: bool = false,
 };
 
-pub fn formatSipAddress(buf: []u8, name: []const u8, base: [16]u8) ![]const u8 {
-    return std.fmt.bufPrint(buf, "{s}{x}", .{ name, base });
-}
-
 pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !DaemonConfig {
     const cwd = std.Io.Dir.cwd();
     const raw = cwd.readFileAlloc(io, path, allocator, .unlimited) catch |err| {
