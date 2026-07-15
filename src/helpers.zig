@@ -1,4 +1,5 @@
 const std = @import("std");
+const registry = @import("registry.zig");
 
 pub fn isRoot() void {
     const uid = std.os.linux.getuid();

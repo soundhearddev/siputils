@@ -141,7 +141,6 @@ pub fn loadOrCreateIdentity(
     var pw_buf: [256]u8 = undefined;
 
     if (keymng.identityExists(io, identity_name)) {
-        std.debug.print("[sipd] '{s}' found\n", .{identity_name});
         const password = try cmd.resolvePassword(io, stdout_writer, init.environ_map, .{ .env_name = "SIPD_PASSWORD" }, &pw_buf, false);
 
         return keymng.loadIdentity(io, identity_name, password);

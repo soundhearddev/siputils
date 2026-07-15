@@ -598,7 +598,7 @@ pub fn formatMeshAddr(buf: *[MESH_ADDR_SIZE * 2]u8, addr: [MESH_ADDR_SIZE]u8) []
     return buf[0..];
 }
 
-pub fn formatMeshAddrGrouped(buf: *[MESH_ADDR_SIZE * 2 + 7]u8, addr: [MESH_ADDR_SIZE]u8) []const u8 {
+pub fn formatMeshAddrGrouped(buf: []u8, addr: [MESH_ADDR_SIZE]u8) []const u8 {
     var pos: usize = 0;
     var i: usize = 0;
     while (i < MESH_ADDR_SIZE) : (i += 4) {
@@ -674,6 +674,165 @@ pub fn formatIpv6(buf: []u8, addr: [16]u8) []const u8 {
     return buf[0..pos];
 }
 
+pub const RegistrySubCommand = enum(u8) {
+    resolve = 0x01,
+    register = 0x02,
+    unregister = 0x03,
+    _,
+};
+
+pub const RegistryResponseCode = enum(u8) {
+    ok = 0x00,
+    not_found = 0x01,
+    ambiguous = 0x02,
+    err = 0xFF,
+    _,
+};
+
+pub const RegistryProtocolError = error{
+    MalformedPayload,
+    NameTooLong,
+    UnknownAddressKind,
+};
+
+pub fn encodeEntry(buf: []u8, entry: Entry) ![]const u8 {
+    if (buf.len < 17) return error.NoSpaceLeft;
+    buf[0] = @intFromEnum(entry.kind);
+    return switch (entry.kind) {
+        .ipv4 => blk: {
+            @memcpy(buf[1..5], &entry.ipv4);
+            break :blk buf[0..5];
+        },
+        .ipv6 => blk: {
+            @memcpy(buf[1..17], &entry.ipv6);
+            break :blk buf[0..17];
+        },
+        .mesh => blk: {
+            @memcpy(buf[1 .. 1 + MESH_ADDR_SIZE], &entry.mesh);
+            break :blk buf[0 .. 1 + MESH_ADDR_SIZE];
+        },
+    };
+}
+
+pub fn decodeEntry(data: []const u8) RegistryProtocolError!Entry {
+    if (data.len < 1) return RegistryProtocolError.MalformedPayload;
+
+    const kind: AddressKind = switch (data[0]) {
+        @intFromEnum(AddressKind.mesh) => .mesh,
+        @intFromEnum(AddressKind.ipv4) => .ipv4,
+        @intFromEnum(AddressKind.ipv6) => .ipv6,
+        else => return RegistryProtocolError.UnknownAddressKind,
+    };
+
+    const addr_data = data[1..];
+    return switch (kind) {
+        .ipv4 => blk: {
+            if (addr_data.len != 4) return RegistryProtocolError.MalformedPayload;
+            break :blk Entry.fromIpv4(addr_data[0..4].*);
+        },
+        .ipv6 => blk: {
+            if (addr_data.len != 16) return RegistryProtocolError.MalformedPayload;
+            break :blk Entry.fromIpv6(addr_data[0..16].*);
+        },
+        .mesh => blk: {
+            if (addr_data.len != MESH_ADDR_SIZE) return RegistryProtocolError.MalformedPayload;
+            break :blk Entry.fromMesh(addr_data[0..MESH_ADDR_SIZE].*);
+        },
+    };
+}
+
+pub fn encodeRegisterRequest(buf: []u8, name: []const u8, entry: Entry) ![]const u8 {
+    if (name.len == 0 or name.len > 255) return RegistryProtocolError.NameTooLong;
+    if (buf.len < 1 + name.len + 17) return error.NoSpaceLeft;
+
+    buf[0] = @intCast(name.len);
+    @memcpy(buf[1..][0..name.len], name);
+
+    var entry_buf: [17]u8 = undefined;
+    const entry_wire = try encodeEntry(&entry_buf, entry);
+    @memcpy(buf[1 + name.len ..][0..entry_wire.len], entry_wire);
+
+    return buf[0 .. 1 + name.len + entry_wire.len];
+}
+
+pub const RegisterRequest = struct {
+    name: []const u8,
+    entry: Entry,
+};
+
+pub fn decodeRegisterRequest(data: []const u8) RegistryProtocolError!RegisterRequest {
+    if (data.len < 1) return RegistryProtocolError.MalformedPayload;
+    const name_len = data[0];
+    if (data.len < 1 + @as(usize, name_len)) return RegistryProtocolError.MalformedPayload;
+
+    const name = data[1..][0..name_len];
+    const entry_wire = data[1 + @as(usize, name_len) ..];
+    const entry = try decodeEntry(entry_wire);
+
+    return .{ .name = name, .entry = entry };
+}
+
+const testing = std.testing;
+
+test "encodeEntry/decodeEntry Roundtrip ipv6" {
+    const entry = Entry.fromIpv6([_]u8{0xAB} ** 16);
+    var buf: [1 + MESH_ADDR_SIZE]u8 = undefined;
+    const wire = try encodeEntry(&buf, entry);
+    const decoded = try decodeEntry(wire);
+    try testing.expectEqual(AddressKind.ipv6, decoded.kind);
+    try testing.expectEqualSlices(u8, &entry.ipv6, &decoded.ipv6);
+}
+
+test "encodeEntry/decodeEntry Roundtrip ipv4" {
+    const entry = Entry.fromIpv4([_]u8{ 10, 0, 0, 1 });
+    var buf: [1 + MESH_ADDR_SIZE]u8 = undefined;
+    const wire = try encodeEntry(&buf, entry);
+    const decoded = try decodeEntry(wire);
+    try testing.expectEqual(AddressKind.ipv4, decoded.kind);
+    try testing.expectEqualSlices(u8, &entry.ipv4, &decoded.ipv4);
+}
+
+test "encodeEntry/decodeEntry Roundtrip mesh" {
+    const entry = Entry.fromMesh([_]u8{0x42} ** MESH_ADDR_SIZE);
+    var buf: [1 + MESH_ADDR_SIZE]u8 = undefined;
+    const wire = try encodeEntry(&buf, entry);
+    const decoded = try decodeEntry(wire);
+    try testing.expectEqual(AddressKind.mesh, decoded.kind);
+    try testing.expectEqualSlices(u8, &entry.mesh, &decoded.mesh);
+}
+
+test "decodeEntry lehnt unbekannten Kind-Byte ab (kein UB)" {
+    const data = [_]u8{0xFF} ++ [_]u8{0} ** 16;
+    try testing.expectError(RegistryProtocolError.UnknownAddressKind, decodeEntry(&data));
+}
+
+test "decodeEntry lehnt falsche Adresslänge ab" {
+    const data = [_]u8{@intFromEnum(AddressKind.ipv6)} ++ [_]u8{0} ** 4;
+    try testing.expectError(RegistryProtocolError.MalformedPayload, decodeEntry(&data));
+}
+
+test "encodeRegisterRequest/decodeRegisterRequest Roundtrip" {
+    const entry = Entry.fromIpv6([_]u8{0x11} ** 16);
+    var buf: [300]u8 = undefined;
+    const wire = try encodeRegisterRequest(&buf, "alice.mesh", entry);
+
+    const decoded = try decodeRegisterRequest(wire);
+    try testing.expectEqualStrings("alice.mesh", decoded.name);
+    try testing.expectEqual(AddressKind.ipv6, decoded.entry.kind);
+    try testing.expectEqualSlices(u8, &entry.ipv6, &decoded.entry.ipv6);
+}
+
+test "decodeRegisterRequest lehnt zu kurze Daten ab" {
+    const data = [_]u8{5} ++ "ab";
+    try testing.expectError(RegistryProtocolError.MalformedPayload, decodeRegisterRequest(data[0..]));
+}
+
+test "encodeRegisterRequest lehnt leeren Namen ab" {
+    const entry = Entry.fromIpv6([_]u8{0} ** 16);
+    var buf: [300]u8 = undefined;
+    try testing.expectError(RegistryProtocolError.NameTooLong, encodeRegisterRequest(&buf, "", entry));
+}
+
 test "formatIpv6 komprimiert führenden Nulllauf (::1)" {
     var buf: [40]u8 = undefined;
     const addr = [_]u8{0} ** 15 ++ [_]u8{1};
@@ -728,11 +887,12 @@ test "formatIpv6 roundtrip mit parseIpv6" {
 }
 
 test "formatMeshAddrGrouped gruppiert alle 4 Bytes mit ':'" {
-    var buf: [MESH_ADDR_SIZE * 2 + 7]u8 = undefined;
+    var buf: [MESH_ADDR_SIZE * 2 + 3]u8 = undefined;
     var addr: [MESH_ADDR_SIZE]u8 = undefined;
     for (0..MESH_ADDR_SIZE) |i| addr[i] = @intCast(i);
+
     const s = formatMeshAddrGrouped(&buf, addr);
 
-    try std.testing.expectEqual(@as(usize, 71), s.len);
+    try std.testing.expectEqual(@as(usize, 35), s.len);
     try std.testing.expect(std.mem.startsWith(u8, s, "00010203:"));
 }

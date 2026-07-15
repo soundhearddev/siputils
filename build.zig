@@ -150,29 +150,29 @@ pub fn build(b: *std.Build) void {
     // registry_client
     // ─────────────────────────────────────────────
 
-    // const registry_client_mod = b.createModule(.{
-    //     .root_source_file = b.path("src/template/registry_client.zig"),
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
+    const registry_client_mod = b.createModule(.{
+        .root_source_file = b.path("src/template/registry_client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
-    // registry_client_mod.addImport("sip", sip_mod);
-    // registry_client_mod.addImport("siputils", siputils_mod);
+    registry_client_mod.addImport("sip", sip_mod);
+    registry_client_mod.addImport("siputils", siputils_mod);
 
-    // const registry_client = b.addExecutable(.{
-    //     .name = "registry_client",
-    //     .root_module = registry_client_mod,
-    // });
+    const registry_client = b.addExecutable(.{
+        .name = "registry_client",
+        .root_module = registry_client_mod,
+    });
 
-    // b.installArtifact(registry_client);
+    b.installArtifact(registry_client);
 
-    // const run_registry_client = b.addRunArtifact(registry_client);
-    // run_registry_client.step.dependOn(b.getInstallStep());
+    const run_registry_client = b.addRunArtifact(registry_client);
+    run_registry_client.step.dependOn(b.getInstallStep());
 
-    // if (b.args) |args| run_registry_client.addArgs(args);
+    if (b.args) |args| run_registry_client.addArgs(args);
 
-    // b.step("run-registry-client", "Run registry_client")
-    //     .dependOn(&run_registry_client.step);
+    b.step("run-registry-client", "Run registry_client")
+        .dependOn(&run_registry_client.step);
 
     // ─────────────────────────────────────────────
     // server

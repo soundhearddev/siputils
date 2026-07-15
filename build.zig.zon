@@ -14,8 +14,8 @@
 
     .dependencies = .{
         .sip = .{
-            .url = "https://github.com/soundhearddev/sip/archive/refs/tags/0.1.6-beta1.tar.gz",
-            .hash = "sip-0.1.6-QVQ7bCQYAQBtZkt3INoXoaZF05qsaqWEb1_ji4II5yVi",
+            .url = "https://github.com/soundhearddev/sip/archive/refs/tags/0.1.7-beta1.tar.gz",
+            .hash = "sip-0.1.7-QVQ7bK8YAQD3Kaz5lpvQcMQnm66o9E7uSicfMH8UOaXn",
         },
     },
 }

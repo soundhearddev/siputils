@@ -1,178 +1,282 @@
 const std = @import("std");
-const linux = std.os.linux;
-const Io = std.Io;
 const sip = @import("sip");
-
 const utils = @import("siputils");
+
+const Io = std.Io;
+const synet = sip.synet;
+const handshake = sip.handshake;
+const translation = sip.translation;
+const protocol = sip.protocol;
+
 const keymng = utils.keymng;
-const registry = utils.registry;
 const fs = utils.filesystem;
+const cmd = utils.cmdhandler;
+const registry = utils.registry;
 
-const DEFAULT_PORT: u16 = 9444;
-const MAX_PEERS: usize = 1000;
+pub const CONFIG_PATH: []const u8 = fs.get_config_path();
 
-pub const RegistryServerError = error{
-    BindFailed,
-    ListenFailed,
-    EncryptionFailed,
-};
+pub var should_shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
-pub const EncryptedIpv6 = struct {
-    nonce: [12]u8,
-    ciphertext: [32]u8,
-    tag: [16]u8,
-};
-
-pub const ServerEntry = struct {
-    sip_address: [16]u8,
-    identity_pubkey: [32]u8,
-    ipv6: [16]u8,
-    allowed_peer_keys: std.ArrayList([32]u8),
-    encrypted_for_peer: std.StringHashMap(EncryptedIpv6),
-    last_updated: u64,
-};
-
-pub const RegistryServer = struct {
+const HandlerContext = struct {
+    keys: sip.identity.KeyPair,
     allocator: std.mem.Allocator,
-    entries: std.StringHashMap(ServerEntry),
-    lock: std.Io.Mutex = .init,
-    port: u16 = DEFAULT_PORT,
-
-    pub fn init(allocator: std.mem.Allocator) RegistryServer {
-        return .{
-            .allocator = allocator,
-            .entries = std.StringHashMap(ServerEntry).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *RegistryServer) void {
-        var it = self.entries.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.allowed_peer_keys.deinit(self.allocator);
-            entry.value_ptr.encrypted_for_peer.deinit();
-        }
-        self.entries.deinit();
-    }
-
-    pub fn registerPeer(
-        self: *RegistryServer,
-        sip_address: [16]u8,
-        identity_pubkey: [32]u8,
-        ipv6: [16]u8,
-        allowed_pubkeys: [][32]u8,
-    ) !void {
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        var sip_hex: [32]u8 = undefined;
-        const hex_str = try std.fmt.bufPrint(&sip_hex, "{x}", .{sip_address});
-        const sip_key = try self.allocator.dupe(u8, hex_str);
-        errdefer self.allocator.free(sip_key);
-
-        var entry: ServerEntry = .{
-            .sip_address = sip_address,
-            .identity_pubkey = identity_pubkey,
-            .ipv6 = ipv6,
-            .allowed_peer_keys = std.ArrayList([32]u8).init(self.allocator),
-            .encrypted_for_peer = std.StringHashMap(EncryptedIpv6).init(self.allocator),
-            .last_updated = std.time.timestamp(),
-        };
-
-        for (allowed_pubkeys) |pubkey| {
-            try entry.allowed_peer_keys.append(pubkey);
-        }
-
-        for (allowed_pubkeys) |peer_pubkey| {
-            var pubkey_hex: [64]u8 = undefined;
-            const pubkey_hex_str = try std.fmt.bufPrint(&pubkey_hex, "{x}", .{peer_pubkey});
-            const encrypted = try self.encryptIpv6ForPeer(ipv6, peer_pubkey);
-            try entry.encrypted_for_peer.put(
-                try self.allocator.dupe(u8, pubkey_hex_str),
-                encrypted,
-            );
-        }
-
-        if (self.entries.getPtr(sip_key)) |existing| {
-            existing.allowed_peer_keys.deinit(self.allocator);
-            existing.encrypted_for_peer.deinit();
-            existing.* = entry;
-        } else {
-            try self.entries.put(sip_key, entry);
-        }
-    }
-
-    fn encryptIpv6ForPeer(self: *RegistryServer, ipv6: [16]u8, peer_pubkey: [32]u8) !EncryptedIpv6 {
-        _ = self;
-        _ = peer_pubkey;
-
-        var result: EncryptedIpv6 = undefined;
-        var rng_src: std.Random.IoSource = .{ .io = std.Io.default() };
-        rng_src.interface().bytes(&result.nonce);
-
-        std.mem.copyForwards(u8, result.ciphertext[0..16], &ipv6);
-        @memset(&result.tag, 0);
-
-        return result;
-    }
-
-    pub fn queryIpv6(
-        self: *RegistryServer,
-        requester_pubkey: [32]u8,
-        target_sip: [16]u8,
-    ) ?EncryptedIpv6 {
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        var target_hex: [32]u8 = undefined;
-        const target_hex_str = std.fmt.bufPrint(&target_hex, "{x}", .{target_sip}) catch return null;
-
-        const target_entry = self.entries.get(target_hex_str) orelse return null;
-
-        var found = false;
-        for (target_entry.allowed_peer_keys.items) |allowed_key| {
-            if (std.mem.eql(u8, &allowed_key, &requester_pubkey)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) return null;
-
-        var requester_hex: [64]u8 = undefined;
-        const requester_hex_str = std.fmt.bufPrint(&requester_hex, "{x}", .{requester_pubkey}) catch return null;
-
-        return target_entry.encrypted_for_peer.get(requester_hex_str);
-    }
+    verbose: bool,
 };
 
-pub fn runServer(
-    init: std.process.Init,
-    port: u16,
+fn handleQuery(
+    io: Io,
+    ctx: *HandlerContext,
+    conn: synet.Socket,
+    session: *handshake.SessionKeys,
+    seq_num: *u32,
+    payload: []const u8,
 ) !void {
-    const io = init.io;
-    const gpa = init.gpa;
+    if (payload.len < 1) {
+        try sendRegistryResponse(io, ctx, conn, session, seq_num, .err, &.{});
+        return;
+    }
 
-    var stdout_buf: [4096]u8 = undefined;
-    var stdout_w = Io.File.stdout().writer(io, &stdout_buf);
-    const stdout = &stdout_w.interface;
+    const sub_cmd: registry.RegistrySubCommand = @enumFromInt(payload[0]);
+    const body = payload[1..];
 
-    var server = RegistryServer.init(gpa);
-    defer server.deinit();
+    switch (sub_cmd) {
+        .resolve => try handleResolve(io, ctx, conn, session, seq_num, body),
+        .register => try handleRegister(io, ctx, conn, session, seq_num, body),
+        .unregister => try handleUnregister(io, ctx, conn, session, seq_num, body),
+        _ => {
+            std.debug.print("[ERROR] Unknown registry sub-command: {d}\n", .{payload[0]});
+            try sendRegistryResponse(io, ctx, conn, session, seq_num, .err, &.{});
+        },
+    }
+}
 
-    try stdout.print("[registry-server] Starting on port {d}...\n", .{port});
-    try stdout.flush();
+fn handleResolve(
+    io: Io,
+    ctx: *HandlerContext,
+    conn: synet.Socket,
+    session: *handshake.SessionKeys,
+    seq_num: *u32,
+    name: []const u8,
+) !void {
+    if (name.len == 0) {
+        try sendRegistryResponse(io, ctx, conn, session, seq_num, .not_found, &.{});
+        return;
+    }
 
-    try stdout.writeAll("[registry-server] Ready\n");
-    try stdout.flush();
+    const result = registry.resolve(io, name) catch |err| switch (err) {
+        registry.RegistryError.NotFound => {
+            std.debug.print("[ERROR] Resolve '{s}': not found\n", .{name});
+            try sendRegistryResponse(io, ctx, conn, session, seq_num, .not_found, &.{});
+            return;
+        },
+        registry.RegistryError.Ambiguous => {
+            std.debug.print("[ERROR] Resolve '{s}': ambiguous\n", .{name});
+            try sendRegistryResponse(io, ctx, conn, session, seq_num, .ambiguous, &.{});
+            return;
+        },
+        else => {
+            std.debug.print("[ERROR] Resolve '{s}' failed: {any}\n", .{ name, err });
+            try sendRegistryResponse(io, ctx, conn, session, seq_num, .err, &.{});
+            return;
+        },
+    };
 
-    var i: u32 = 0;
-    while (i < 10) : (i += 1) {
-        try io.sleep(.{ .nanoseconds = 1 * std.time.ns_per_s }, .awake);
-        try stdout.print("[registry-server] Tick {d}\n", .{i});
-        try stdout.flush();
+    var entry_buf: [17]u8 = undefined;
+    const entry_wire = registry.encodeEntry(&entry_buf, result.entry) catch {
+        try sendRegistryResponse(io, ctx, conn, session, seq_num, .err, &.{});
+        return;
+    };
+
+    try sendRegistryResponse(io, ctx, conn, session, seq_num, .ok, entry_wire);
+}
+
+fn handleRegister(
+    io: Io,
+    ctx: *HandlerContext,
+    conn: synet.Socket,
+    session: *handshake.SessionKeys,
+    seq_num: *u32,
+    body: []const u8,
+) !void {
+    const req = registry.decodeRegisterRequest(body) catch |err| {
+        std.debug.print("[ERROR] Register: invalid payload ({any})\n", .{err});
+        try sendRegistryResponse(io, ctx, conn, session, seq_num, .err, &.{});
+        return;
+    };
+
+    // Autorisierung ist aktuell offen!!!
+    // TODO: einschränken, sobald das Autorisierungsmodell feststeht
+    registry.register(io, req.name, req.entry) catch |err| {
+        std.debug.print("[ERROR] Register '{s}' failed: {any}\n", .{ req.name, err });
+        try sendRegistryResponse(io, ctx, conn, session, seq_num, .err, &.{});
+        return;
+    };
+
+    std.debug.print("[registry] Registered: '{s}' ({s})\n", .{ req.name, @tagName(req.entry.kind) });
+    try sendRegistryResponse(io, ctx, conn, session, seq_num, .ok, &.{});
+}
+
+fn handleUnregister(
+    io: Io,
+    ctx: *HandlerContext,
+    conn: synet.Socket,
+    session: *handshake.SessionKeys,
+    seq_num: *u32,
+    name: []const u8,
+) !void {
+    if (name.len == 0) {
+        try sendRegistryResponse(io, ctx, conn, session, seq_num, .not_found, &.{});
+        return;
+    }
+
+    registry.unregister(io, name) catch |err| switch (err) {
+        registry.RegistryError.NotFound => {
+            try sendRegistryResponse(io, ctx, conn, session, seq_num, .not_found, &.{});
+            return;
+        },
+        else => {
+            std.debug.print("[ERROR] Unregister '{s}' failed: {any}\n", .{ name, err });
+            try sendRegistryResponse(io, ctx, conn, session, seq_num, .err, &.{});
+            return;
+        },
+    };
+
+    std.debug.print("[registry] Removed: '{s}'\n", .{name});
+    try sendRegistryResponse(io, ctx, conn, session, seq_num, .ok, &.{});
+}
+
+fn sendRegistryResponse(
+    io: Io,
+    ctx: *HandlerContext,
+    conn: synet.Socket,
+    session: *handshake.SessionKeys,
+    seq_num: *u32,
+    code: registry.RegistryResponseCode,
+    data: []const u8,
+) !void {
+    const payload = try ctx.allocator.alloc(u8, 1 + data.len);
+    defer ctx.allocator.free(payload);
+    payload[0] = @intFromEnum(code);
+    @memcpy(payload[1..], data);
+
+    const pkt = try translation.buildOutboundPacket(
+        io,
+        ctx.allocator,
+        session.peer_address,
+        session.peer_address,
+        session.conn_id,
+        seq_num.*,
+        .Data,
+        payload,
+        session.tx,
+    );
+    defer ctx.allocator.free(pkt);
+
+    try synet.sendAll(conn, pkt);
+    seq_num.* += 1;
+}
+
+fn handleConnection(io: Io, ctx: *HandlerContext, conn: synet.Socket) void {
+    defer synet.close(conn);
+
+    const my_address = sip.identity.baseAddress(ctx.keys.public);
+
+    var session = handshake.performKeyExchange(
+        io,
+        ctx.allocator,
+        conn,
+        ctx.keys,
+        my_address,
+        false,
+        null,
+    ) catch |err| {
+        std.debug.print("[ERROR] Handshake failed: {any}\n", .{err});
+        return;
+    };
+    defer session.deinit();
+
+    var seq_num: u32 = 0;
+
+    while (true) {
+        const inbound = translation.readInboundPacket(
+            conn,
+            ctx.allocator,
+            session.rx,
+        ) catch |err| {
+            switch (err) {
+                error.ConnectionClosed, error.SocketError => {
+                    std.debug.print("[registry] Client disconnected.\n", .{});
+
+                    break;
+                },
+                else => {
+                    std.debug.print("[ERROR] Unexpected error while reading packet: {any}\n", .{err});
+                    break;
+                },
+            }
+        };
+        defer translation.freeInboundPacket(ctx.allocator, inbound);
+
+        switch (inbound.parsed.command) {
+            .Query => {
+                handleQuery(io, ctx, conn, &session, &seq_num, inbound.parsed.payload) catch |err| {
+                    std.debug.print("[ERROR] Error while processing Query: {any}\n", .{err});
+                    break;
+                };
+            },
+            .Close => {
+                std.debug.print("[registry] Client sent Close signal.\n", .{});
+                break;
+            },
+            else => {
+                std.debug.print("[WARNING] Ignoring unexpected command: {}\n", .{inbound.parsed.command});
+            },
+        }
     }
 }
 
 pub fn main(init: std.process.Init) !void {
-    try runServer(init, DEFAULT_PORT);
+    const gpa = init.gpa;
+    const io = init.io;
+
+    const args = try init.minimal.args.toSlice(gpa);
+    defer gpa.free(args);
+
+    const config_path = if (args.len > 1) args[1] else CONFIG_PATH;
+
+    std.debug.print("[registry] Loading configuration from: {s}...\n", .{config_path});
+
+    const config = try utils.sipd.loadConfig(io, gpa, config_path);
+    defer {
+        if (config.host) |h| gpa.free(h);
+        if (config.output_path) |o| gpa.free(o);
+        gpa.free(config.identity_name);
+    }
+
+    const keys = try utils.sipd.loadOrCreateIdentity(init, config.identity_name);
+
+    std.debug.print("[registry] Identity '{s}' loaded successfully.\n", .{config.identity_name});
+
+    const listener = try utils.sipd.createListener(config);
+    defer synet.close(listener);
+
+    std.debug.print("[registry] Server listening on port {} (IPv6: {})...\n", .{ config.port, config.use_v6 });
+
+    var context = HandlerContext{
+        .keys = keys,
+        .allocator = gpa,
+        .verbose = config.verbose,
+    };
+
+    while (!should_shutdown.load(.acquire)) {
+        const conn = synet.accept(listener) catch |err| {
+            if (should_shutdown.load(.acquire)) break;
+            std.debug.print("[ERROR] Accept failed: {any}\n", .{err});
+            continue;
+        };
+
+        utils.sipd.setCurrentConnection(io, conn);
+        handleConnection(io, &context, conn);
+        utils.sipd.clearCurrentConnection(io);
+    }
 }
