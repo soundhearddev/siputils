@@ -113,19 +113,207 @@ pub fn parseBool(s: []const u8) !bool {
 }
 
 pub var should_shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
-var current_connection: ?sip.synet.Socket = null;
-var connection_mutex: std.Io.Mutex = .init;
 
-pub fn setCurrentConnection(io: std.Io, conn: sip.synet.Socket) void {
-    connection_mutex.lockUncancelable(io);
-    defer connection_mutex.unlock(io);
-    current_connection = conn;
+const SpinLock = struct {
+    state: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    fn lock(self: *SpinLock) void {
+        while (self.state.cmpxchgWeak(false, true, .acquire, .monotonic) != null) {}
+    }
+
+    fn unlock(self: *SpinLock) void {
+        self.state.store(false, .release);
+    }
+};
+
+const ConnectionRegistry = struct {
+    mutex: SpinLock = .{},
+    sockets: std.AutoHashMapUnmanaged(sip.synet.Socket, void) = .empty,
+    allocator: std.mem.Allocator,
+
+    fn init(allocator: std.mem.Allocator) ConnectionRegistry {
+        return .{ .allocator = allocator };
+    }
+
+    fn deinit(self: *ConnectionRegistry) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.sockets.deinit(self.allocator);
+    }
+
+    fn add(self: *ConnectionRegistry, sock: sip.synet.Socket) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.sockets.put(self.allocator, sock, {}) catch {};
+    }
+
+    fn remove(self: *ConnectionRegistry, sock: sip.synet.Socket) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        _ = self.sockets.remove(sock);
+    }
+
+    fn closeAll(self: *ConnectionRegistry) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        var it = self.sockets.keyIterator();
+        while (it.next()) |sock| {
+            sip.synet.close(sock.*);
+        }
+        self.sockets.clearRetainingCapacity();
+    }
+};
+
+var connection_registry: ConnectionRegistry = undefined;
+var connection_registry_ready: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+
+pub fn initGlobalState(allocator: std.mem.Allocator) void {
+    connection_registry = ConnectionRegistry.init(allocator);
+    connection_registry_ready.store(true, .release);
+    global_session_cache = SessionCache.init(allocator);
+    session_cache_ready.store(true, .release);
 }
 
-pub fn clearCurrentConnection(io: std.Io) void {
-    connection_mutex.lockUncancelable(io);
-    defer connection_mutex.unlock(io);
-    current_connection = null;
+pub fn deinitGlobalState() void {
+    if (connection_registry_ready.load(.acquire)) {
+        connection_registry.deinit();
+    }
+    if (session_cache_ready.load(.acquire)) {
+        global_session_cache.deinit();
+    }
+}
+
+fn getConnectionRegistry() *ConnectionRegistry {
+    std.debug.assert(connection_registry_ready.load(.acquire));
+    return &connection_registry;
+}
+
+pub fn requestShutdown(listener: sip.synet.Socket) void {
+    should_shutdown.store(true, .release);
+
+    sip.synet.close(listener);
+    getConnectionRegistry().closeAll();
+}
+
+pub const SessionCacheKey = struct {
+    host: [64]u8,
+    host_len: u8,
+    port: u16,
+
+    pub fn make(host: []const u8, port: u16) SessionCacheKey {
+        var key = SessionCacheKey{ .host = undefined, .host_len = 0, .port = port };
+        const len = @min(host.len, key.host.len);
+        @memcpy(key.host[0..len], host[0..len]);
+        key.host_len = @intCast(len);
+        return key;
+    }
+};
+
+const CachedSession = struct {
+    sock: sip.synet.Socket,
+    session: sip.handshake.SessionKeys,
+    in_use: SpinLock = .{},
+};
+
+pub const SessionCache = struct {
+    mutex: SpinLock = .{},
+    entries: std.AutoHashMapUnmanaged(u64, *CachedSession) = .empty,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) SessionCache {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *SessionCache) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        var it = self.entries.valueIterator();
+        while (it.next()) |entry_ptr| {
+            const entry = entry_ptr.*;
+            sip.synet.close(entry.sock);
+            entry.session.deinit();
+            self.allocator.destroy(entry);
+        }
+        self.entries.deinit(self.allocator);
+    }
+
+    fn hashKey(key: SessionCacheKey) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(key.host[0..key.host_len]);
+        hasher.update(std.mem.asBytes(&key.port));
+        return hasher.final();
+    }
+
+    pub const Handle = struct {
+        cache: *SessionCache,
+        key_hash: u64,
+        entry: *CachedSession,
+
+        pub fn socket(self: Handle) sip.synet.Socket {
+            return self.entry.sock;
+        }
+
+        pub fn session(self: Handle) *sip.handshake.SessionKeys {
+            return &self.entry.session;
+        }
+
+        pub fn release(self: Handle) void {
+            self.entry.in_use.unlock();
+        }
+
+        pub fn invalidate(self: Handle) void {
+            self.cache.mutex.lock();
+            _ = self.cache.entries.remove(self.key_hash);
+            self.cache.mutex.unlock();
+
+            sip.synet.close(self.entry.sock);
+            self.entry.session.deinit();
+            self.entry.in_use.unlock();
+            self.cache.allocator.destroy(self.entry);
+        }
+    };
+
+    pub fn getOrConnect(
+        self: *SessionCache,
+        key: SessionCacheKey,
+        comptime ConnectCtx: type,
+        connect_ctx: ConnectCtx,
+        comptime connect_fn: fn (ctx: ConnectCtx) anyerror!struct { sock: sip.synet.Socket, session: sip.handshake.SessionKeys },
+    ) !Handle {
+        const key_hash = hashKey(key);
+
+        self.mutex.lock();
+        if (self.entries.get(key_hash)) |existing| {
+            self.mutex.unlock();
+            existing.in_use.lock();
+            return Handle{ .cache = self, .key_hash = key_hash, .entry = existing };
+        }
+
+        errdefer self.mutex.unlock();
+
+        const result = try connect_fn(connect_ctx);
+        errdefer sip.synet.close(result.sock);
+        var owned_session = result.session;
+        errdefer owned_session.deinit();
+
+        const entry = try self.allocator.create(CachedSession);
+        entry.* = .{ .sock = result.sock, .session = owned_session };
+        errdefer self.allocator.destroy(entry);
+
+        try self.entries.put(self.allocator, key_hash, entry);
+        entry.in_use.lock();
+        self.mutex.unlock();
+
+        return Handle{ .cache = self, .key_hash = key_hash, .entry = entry };
+    }
+};
+
+var global_session_cache: SessionCache = undefined;
+var session_cache_ready: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+
+pub fn sessionCache() *SessionCache {
+    std.debug.assert(session_cache_ready.load(.acquire));
+    return &global_session_cache;
 }
 
 pub fn loadOrCreateIdentity(
@@ -200,8 +388,20 @@ pub fn createListener(config: DaemonConfig) !sip.synet.Socket {
         try sip.synet.bind(listener, &bind_addr);
     }
 
-    try sip.synet.listen(listener, 1);
+    try sip.synet.listen(listener, 128);
     return listener;
+}
+
+fn handleOneConnection(
+    io: std.Io,
+    context: anytype,
+    conn: sip.synet.Socket,
+    comptime handler: fn (io: std.Io, ctx: @TypeOf(context), conn: sip.synet.Socket) void,
+) void {
+    defer sip.synet.close(conn);
+    defer getConnectionRegistry().remove(conn);
+
+    handler(io, context, conn);
 }
 
 pub fn acceptLoop(
@@ -210,14 +410,30 @@ pub fn acceptLoop(
     context: anytype,
     comptime handler: fn (io: std.Io, ctx: @TypeOf(context), conn: sip.synet.Socket) void,
 ) !void {
+    const Ctx = @TypeOf(context);
+
+    const Spawner = struct {
+        fn run(spawn_io: std.Io, spawn_conn: sip.synet.Socket, spawn_ctx: Ctx) void {
+            handleOneConnection(spawn_io, spawn_ctx, spawn_conn, handler);
+        }
+    };
+
     while (!should_shutdown.load(.acquire)) {
         const conn = sip.synet.accept(listener) catch |err| {
             if (should_shutdown.load(.acquire)) break;
-            return err;
+            std.debug.print("[sipd] Warning: accept() failed: {any}\n", .{err});
+            continue;
         };
 
-        setCurrentConnection(io, conn);
-        handler(io, context, conn);
-        clearCurrentConnection(io);
+        getConnectionRegistry().add(conn);
+
+        const thread = std.Thread.spawn(.{}, Spawner.run, .{ io, conn, context }) catch |err| {
+            std.debug.print("[sipd] Error: Failed to spawn connection handler: {any}\n", .{err});
+            getConnectionRegistry().remove(conn);
+            sip.synet.close(conn);
+            continue;
+        };
+
+        thread.detach();
     }
 }

@@ -18,6 +18,8 @@ const FLAG_HAS_MESH: u16 = 0x0002;
 
 pub const AddressKind = enum(u8) { mesh = 0, ipv4 = 1, ipv6 = 2 };
 
+var file_mutex: std.Io.Mutex = .init;
+
 pub const Entry = struct {
     kind: AddressKind,
     mesh: [MESH_ADDR_SIZE]u8 = [_]u8{0} ** MESH_ADDR_SIZE,
@@ -170,6 +172,9 @@ pub fn isDiscoveredName(name: []const u8) bool {
 }
 
 pub fn registerDiscovered(io: Io, ipv6: [16]u8, mesh_addr: [MESH_ADDR_SIZE]u8) !void {
+    try file_mutex.lock(io);
+    defer file_mutex.unlock(io);
+
     var name_buf: [MAX_NAME_LEN]u8 = undefined;
     const wanted_name = discoveredName(&name_buf, ipv6);
 
@@ -242,6 +247,9 @@ pub fn forEachRecord(
     ctx: Context,
     comptime callback: fn (ctx: Context, entry: RegistryEntry) anyerror!void,
 ) !void {
+    try file_mutex.lock(io);
+    defer file_mutex.unlock(io);
+
     const f = openReadOnly(io) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
@@ -260,7 +268,7 @@ pub fn forEachRecord(
         entry.name_len = @min(rec_name.len, entry.name_buf.len);
         @memcpy(entry.name_buf[0..entry.name_len], rec_name[0..entry.name_len]);
 
-        entry.kind = @enumFromInt(rec.kind);
+        entry.kind = std.enums.fromInt(AddressKind, rec.kind) orelse continue;
         entry.addr = rec.addr;
         entry.mesh_addr = rec.mesh_addr;
         entry.has_mesh = rec.hasMesh();
@@ -339,6 +347,9 @@ fn recordCount(io: Io, f: Io.File) !u32 {
 pub fn register(io: Io, name: []const u8, entry: Entry) !void {
     if (name.len == 0 or name.len > MAX_NAME_LEN) return RegistryError.NameTooLong;
 
+    try file_mutex.lock(io);
+    defer file_mutex.unlock(io);
+
     const f = try openOrCreate(io);
     defer f.close(io);
 
@@ -370,6 +381,9 @@ pub fn register(io: Io, name: []const u8, entry: Entry) !void {
 pub fn updateMeshAddress(io: Io, name: []const u8, mesh_addr: [MESH_ADDR_SIZE]u8) !void {
     if (name.len == 0 or name.len > MAX_NAME_LEN) return RegistryError.NameTooLong;
 
+    try file_mutex.lock(io);
+    defer file_mutex.unlock(io);
+
     const f = try openOrCreate(io);
     defer f.close(io);
 
@@ -390,6 +404,9 @@ pub fn updateMeshAddress(io: Io, name: []const u8, mesh_addr: [MESH_ADDR_SIZE]u8
 }
 
 pub fn unregister(io: Io, name: []const u8) !void {
+    try file_mutex.lock(io);
+    defer file_mutex.unlock(io);
+
     const f = try openOrCreate(io);
     defer f.close(io);
 
@@ -410,16 +427,19 @@ pub fn unregister(io: Io, name: []const u8) !void {
 }
 
 pub fn compact(io: Io, allocator: std.mem.Allocator) !void {
+    file_mutex.lock();
+    defer file_mutex.unlock();
+
     const f = try openOrCreate(io);
     defer f.close(io);
 
     const total = try recordCount(io, f);
-    var active = std.ArrayList(Record).init(allocator);
-    defer active.deinit();
+    var active: std.ArrayList(Record) = .empty;
+    defer active.deinit(allocator);
 
     for (0..total) |i| {
         const rec = try readRecord(io, f, @intCast(i));
-        if (!rec.isDeleted()) try active.append(rec);
+        if (!rec.isDeleted()) try active.append(allocator, rec);
     }
 
     const new_header = Header{
@@ -440,6 +460,9 @@ pub fn resolve(io: Io, name: []const u8) !ResolveResult {
 
     if (parseIpv6(name) catch null) |ipv6| return .{ .source = .direct_ipv6, .entry = Entry.fromIpv6(ipv6) };
     if (parseIpv4(name)) |ipv4| return .{ .source = .direct_ipv4, .entry = Entry.fromIpv4(ipv4) };
+
+    try file_mutex.lock(io);
+    defer file_mutex.unlock(io);
 
     const f = openReadOnly(io) catch |err| switch (err) {
         error.FileNotFound => return RegistryError.NotFound,

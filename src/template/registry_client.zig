@@ -29,7 +29,6 @@ pub const RegistryClientError = error{
 
 pub const RegistryClient = struct {
     allocator: std.mem.Allocator,
-    verbose: bool,
     client_keys: sip.identity.KeyPair,
 
     pub fn init(allocator: std.mem.Allocator, io: Io, init_ctx: std.process.Init, identity_name: []const u8) !RegistryClient {
@@ -52,7 +51,6 @@ pub const RegistryClient = struct {
 
         return RegistryClient{
             .allocator = allocator,
-            .verbose = true,
             .client_keys = client_keys,
         };
     }
@@ -70,7 +68,7 @@ pub const RegistryClient = struct {
         const server_addr = synet.buildSockaddrIn6(server_ip, server_port);
 
         synet.connect6(sock, &server_addr) catch |err| {
-            std.debug.print("[ERROR] Connection failed: {}\n", .{err});
+            std.debug.print("[ERROR]: {}\n", .{err});
             return error.ConnectionError;
         };
 
@@ -145,7 +143,10 @@ pub const RegistryClient = struct {
             return error.InvalidServerResponse;
         }
 
-        const code: registry.RegistryResponseCode = @enumFromInt(parsed.payload[0]);
+        const code = std.enums.fromInt(registry.RegistryResponseCode, parsed.payload[0]) orelse {
+            translation.freeInboundPacket(self.allocator, resp_pkt);
+            return error.InvalidServerResponse;
+        };
         return RegistryResponse{
             .code = code,
             .data = parsed.payload[1..],
@@ -323,13 +324,11 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
-    std.debug.print("[DEBUG] 1. Reading arguments...\n", .{});
     const raw_args = try init.minimal.args.toSlice(gpa);
     defer gpa.free(raw_args);
 
-    std.debug.print("[DEBUG] 2. Parsing arguments...\n", .{});
     const args = parseArgs(raw_args) catch |err| {
-        std.debug.print("[DEBUG] parseArgs failed with: {any}\n", .{err});
+        std.debug.print("[ERROR] Argument parsing failed: {any}\n", .{err});
         printUsage();
         std.process.exit(1);
     };
@@ -346,7 +345,11 @@ pub fn main(init: std.process.Init) !void {
                 const base_name = std.fs.path.basename(target_path);
                 resolved_identity_name = base_name;
                 std.debug.print("[cli] Identity 'default' resolved to symlink target: '{s}'\n", .{resolved_identity_name});
-            } else |_| {}
+            } else |err| {
+                if (err != error.FileNotFound and err != error.NotLink) {
+                    std.debug.print("[WARNING] Could not resolve 'default' identity symlink: {any}\n", .{err});
+                }
+            }
         } else |_| {}
     }
 
@@ -357,15 +360,11 @@ pub fn main(init: std.process.Init) !void {
 
     if (std.mem.eql(u8, args.subcommand, "resolve")) {
         const target_name = args.resolve_target orelse {
-            std.debug.print("[ERROR] resolve_target is null!\n", .{});
             std.debug.print("[ERROR] 'resolve' requires a target name.\n", .{});
             std.process.exit(1);
         };
 
-        const entry = client.resolveRemote(io, args.server_host, args.port, target_name) catch |err| {
-            std.debug.print("[✗] Resolution failed (catch block): {any}\n", .{err});
-            std.process.exit(1);
-        };
+        const entry = client.resolveRemote(io, args.server_host, args.port, target_name) catch std.process.exit(1);
 
         if (entry) |e| {
             var ip_buf: [40]u8 = undefined;

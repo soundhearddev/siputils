@@ -235,6 +235,10 @@ fn handleConnection(io: Io, ctx: *HandlerContext, conn: synet.Socket) void {
     }
 }
 
+fn handleConnectionWrapper(io: Io, ctx: *HandlerContext, conn: synet.Socket) void {
+    handleConnection(io, ctx, conn);
+}
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -257,10 +261,12 @@ pub fn main(init: std.process.Init) !void {
 
     std.debug.print("[registry] Identity '{s}' loaded successfully.\n", .{config.identity_name});
 
-    const listener = try utils.sipd.createListener(config);
-    defer synet.close(listener);
+    utils.sipd.initGlobalState(gpa);
+    defer utils.sipd.deinitGlobalState();
 
-    std.debug.print("[registry] Server listening on port {} (IPv6: {})...\n", .{ config.port, config.use_v6 });
+    const listener = try utils.sipd.createListener(config);
+
+    std.debug.print("[registry] Server listening on port {}\n", .{config.port});
 
     var context = HandlerContext{
         .keys = keys,
@@ -268,15 +274,5 @@ pub fn main(init: std.process.Init) !void {
         .verbose = config.verbose,
     };
 
-    while (!should_shutdown.load(.acquire)) {
-        const conn = synet.accept(listener) catch |err| {
-            if (should_shutdown.load(.acquire)) break;
-            std.debug.print("[ERROR] Accept failed: {any}\n", .{err});
-            continue;
-        };
-
-        utils.sipd.setCurrentConnection(io, conn);
-        handleConnection(io, &context, conn);
-        utils.sipd.clearCurrentConnection(io);
-    }
+    try utils.sipd.acceptLoop(io, listener, &context, handleConnectionWrapper);
 }
