@@ -91,90 +91,6 @@ pub fn build(b: *std.Build) void {
         .dependOn(&run_sipreq.step);
 
     // ─────────────────────────────────────────────
-    // registry_viewer
-    // ─────────────────────────────────────────────
-
-    const registry_viewer_mod = b.createModule(.{
-        .root_source_file = b.path("src/template/registry_viewer.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    registry_viewer_mod.addImport("sip", sip_mod);
-    registry_viewer_mod.addImport("siputils", siputils_mod);
-
-    const registry_viewer = b.addExecutable(.{
-        .name = "registry_viewer",
-        .root_module = registry_viewer_mod,
-    });
-
-    b.installArtifact(registry_viewer);
-
-    const run_registry_viewer = b.addRunArtifact(registry_viewer);
-    run_registry_viewer.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| run_registry_viewer.addArgs(args);
-
-    b.step("run-registry-viewer", "Run registry_viewer")
-        .dependOn(&run_registry_viewer.step);
-
-    // ─────────────────────────────────────────────
-    // registry_server
-    // ─────────────────────────────────────────────
-
-    const registry_server_mod = b.createModule(.{
-        .root_source_file = b.path("src/template/registry_server.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    registry_server_mod.addImport("sip", sip_mod);
-    registry_server_mod.addImport("siputils", siputils_mod);
-
-    const registry_server = b.addExecutable(.{
-        .name = "registry_server",
-        .root_module = registry_server_mod,
-    });
-
-    b.installArtifact(registry_server);
-
-    const run_registry_server = b.addRunArtifact(registry_server);
-    run_registry_server.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| run_registry_server.addArgs(args);
-
-    b.step("run-registry-server", "Run registry_server")
-        .dependOn(&run_registry_server.step);
-
-    // ─────────────────────────────────────────────
-    // registry_client
-    // ─────────────────────────────────────────────
-
-    const registry_client_mod = b.createModule(.{
-        .root_source_file = b.path("src/template/registry_client.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    registry_client_mod.addImport("sip", sip_mod);
-    registry_client_mod.addImport("siputils", siputils_mod);
-
-    const registry_client = b.addExecutable(.{
-        .name = "registry_client",
-        .root_module = registry_client_mod,
-    });
-
-    b.installArtifact(registry_client);
-
-    const run_registry_client = b.addRunArtifact(registry_client);
-    run_registry_client.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| run_registry_client.addArgs(args);
-
-    b.step("run-registry-client", "Run registry_client")
-        .dependOn(&run_registry_client.step);
-
-    // ─────────────────────────────────────────────
     // server
     // ─────────────────────────────────────────────
     const server_mod = b.createModule(.{
@@ -201,33 +117,6 @@ pub fn build(b: *std.Build) void {
 
     b.step("run-server", "Run server")
         .dependOn(&run_server.step);
-
-    // ─────────────────────────────────────────────
-    // setdefault
-    // ─────────────────────────────────────────────
-    const setdefault_mod = b.createModule(.{
-        .root_source_file = b.path("src/template/setdefault.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    setdefault_mod.addImport("sip", sip_mod);
-    setdefault_mod.addImport("siputils", siputils_mod);
-
-    const setdefault = b.addExecutable(.{
-        .name = "set-default",
-        .root_module = setdefault_mod,
-    });
-
-    b.installArtifact(setdefault);
-
-    const run_setdefault = b.addRunArtifact(setdefault);
-    run_setdefault.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| run_setdefault.addArgs(args);
-
-    b.step("run-setdefault", "Set default")
-        .dependOn(&run_setdefault.step);
 
     // ─────────────────────────────────────────────
     // cmdhandler

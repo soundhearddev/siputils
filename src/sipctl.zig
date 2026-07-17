@@ -1,8 +1,3 @@
-// TODO:
-// default user integration!!!!
-// etc...
-//
-//
 const std = @import("std");
 const sip = @import("sip");
 const Io = std.Io;
@@ -77,6 +72,43 @@ fn listIdentities(io: std.Io, stdout: *Io.Writer, verbose: bool) !void {
     try stdout.flush();
 }
 
+fn cmdDefault(io: std.Io, stdout: *Io.Writer, args: *cmd.ArgIter) !void {
+    const name = args.next() orelse {
+        var buf: [64]u8 = undefined;
+        const current = keymng.readDefaultIdentity(&buf) catch {
+            try stdout.writeAll("No default identity is set.\n");
+            try stdout.flush();
+            return;
+        };
+        try stdout.print("Current default: {s}\n", .{current});
+        try stdout.flush();
+        return;
+    };
+
+    if (!keymng.validName(name)) {
+        try stdout.print("Invalid identity name: {s}\n", .{name});
+        try stdout.flush();
+        return error.InvalidName;
+    }
+
+    if (!keymng.identityExists(io, name)) {
+        try stdout.print("Identity '{s}' does not exist.\n", .{name});
+        try stdout.flush();
+        return error.IdentityNotFound;
+    }
+
+    keymng.setDefaultIdentity(name) catch |err| switch (err) {
+        error.SymlinkFailed => {
+            try stdout.writeAll("Permission denied: setting the default identity requires root.\n");
+            try stdout.flush();
+            return;
+        },
+        else => return err,
+    };
+    try stdout.print("Default identity set to: {s}\n", .{name});
+    try stdout.flush();
+}
+
 fn printHelp(stdout: *Io.Writer) !void {
     try stdout.writeAll(
         \\sipctl - SIP identity and address management
@@ -92,6 +124,9 @@ fn printHelp(stdout: *Io.Writer) !void {
         \\  sipctl export <name>        Output SIP address + public key
         \\  sipctl passwd <name>       Change identity password
         \\  sipctl rm <name>           Delete identity
+        \\
+        \\  sipctl default             Show the current default identity
+        \\  sipctl default <name>      Set the default identity
         \\
         \\Trust management:
         \\  sipctl trust <pubkey_hex> <label>
@@ -198,6 +233,11 @@ pub fn main(init: std.process.Init) !void {
         cmd.ctl.cmdSend(io, gpa, stdout, init.environ_map, &args) catch |err| {
             std.debug.print("Send error: {}\n", .{err});
             std.debug.print("Usage: sipctl send <identity> <host> [--port PORT] <message>\n", .{});
+        };
+    } else if (std.mem.eql(u8, final_cmd, "default")) {
+        cmdDefault(io, stdout, &args) catch |err| switch (err) {
+            error.InvalidName, error.IdentityNotFound => {},
+            else => return err,
         };
     } else if (std.mem.eql(u8, final_cmd, "trust")) {
         utils.helpers.isRoot();
